@@ -5,25 +5,27 @@ import shutil
 import tempfile
 import zipfile
 
-NAMESPACE = "http://www.qsardb.org/QDB"
+_CONTAINER_ATTRIBUTES = ("Id", "Name", "Description", "Labels", "Cargos")
 
-ZIP_SUFFIXES = (".zip", ".qdb")
-
-CONTAINERS = {
-	"compounds" : ("CompoundRegistry", "Compound", ("Id", "Name", "Description", "Labels", "Cargos", "Cas", "InChI")),
-	"properties" : ("PropertyRegistry", "Property", ("Id", "Name", "Description", "Labels", "Cargos", "Endpoint", "Species")),
-	"descriptors" : ("DescriptorRegistry", "Descriptor", ("Id", "Name", "Description", "Labels", "Cargos", "Application")),
-	"models" : ("ModelRegistry", "Model", ("Id", "Name", "Description", "Labels", "Cargos", "PropertyId")),
-	"predictions" : ("PredictionRegistry", "Prediction", ("Id", "Name", "Description", "Labels", "Cargos", "ModelId", "Type", "Application"))
+_CONTAINERS = {
+	"compounds" : ("CompoundRegistry", "Compound", _CONTAINER_ATTRIBUTES + ("Cas", "InChI")),
+	"properties" : ("PropertyRegistry", "Property", _CONTAINER_ATTRIBUTES + ("Endpoint", "Species")),
+	"descriptors" : ("DescriptorRegistry", "Descriptor", _CONTAINER_ATTRIBUTES + ("Application",)),
+	"models" : ("ModelRegistry", "Model", _CONTAINER_ATTRIBUTES + ("PropertyId",)),
+	"predictions" : ("PredictionRegistry", "Prediction", _CONTAINER_ATTRIBUTES + ("ModelId", "Type", "Application"))
 }
+
+_NAMESPACE = "http://www.qsardb.org/QDB"
+
+_ZIP_SUFFIXES = (".zip", ".qdb")
 
 class QDB(object):
 
 	def __init__(self, name = None, description = None):
 		self.name = name
 		self.description = description
-		self.containers = {type : [] for type in CONTAINERS}
-		self.cargos = {type : {} for type in CONTAINERS}
+		self.containers = {type : [] for type in _CONTAINERS}
+		self.cargos = {type : {} for type in _CONTAINERS}
 
 	def add(self, type, attributes, cargos):
 		attributes = dict(attributes)
@@ -32,7 +34,7 @@ class QDB(object):
 		self.cargos[type][attributes["Id"]] = cargos
 
 	def store(self, path):
-		if path.endswith(ZIP_SUFFIXES):
+		if path.endswith(_ZIP_SUFFIXES):
 			directory = tempfile.mkdtemp()
 			self._store(directory)
 			self._store_zip(directory, path)
@@ -48,7 +50,7 @@ class QDB(object):
 
 		self._store_xml(os.path.join(directory, "archive.xml"), "Archive", [{"Name" : self.name, "Description" : self.description}], ("Name", "Description"))
 
-		for type, (registry_tag, container_tag, order) in CONTAINERS.items():
+		for type, (registry_tag, container_tag, order) in _CONTAINERS.items():
 			if not self.containers[type]:
 				continue
 			self._store_xml(os.path.join(directory, type, type + ".xml"), registry_tag, self.containers[type], order, container_tag)
@@ -57,17 +59,17 @@ class QDB(object):
 					self._store_cargo(directory, type, id, cargo_id, payload)
 
 	def _store_xml(self, path, registry_tag, containers, order, container_tag = None):
-		root = ElementTree.Element("{%s}%s" % (NAMESPACE, registry_tag))
+		root = ElementTree.Element("{%s}%s" % (_NAMESPACE, registry_tag))
 		for attributes in containers:
-			parent = root if container_tag is None else ElementTree.SubElement(root, "{%s}%s" % (NAMESPACE, container_tag))
+			parent = root if container_tag is None else ElementTree.SubElement(root, "{%s}%s" % (_NAMESPACE, container_tag))
 			for tag in order:
 				value = attributes.get(tag)
 				if value is not None:
-					ElementTree.SubElement(parent, "{%s}%s" % (NAMESPACE, tag)).text = str(value)
+					ElementTree.SubElement(parent, "{%s}%s" % (_NAMESPACE, tag)).text = str(value)
 		os.makedirs(os.path.dirname(path), exist_ok = True)
 		tree = ElementTree.ElementTree(root)
 		ElementTree.indent(tree)
-		tree.write(path, encoding = "UTF-8", xml_declaration = True, default_namespace = NAMESPACE)
+		tree.write(path, encoding = "UTF-8", xml_declaration = True, default_namespace = _NAMESPACE)
 
 	def _store_cargo(self, directory, type, id, cargo_id, payload):
 		os.makedirs(os.path.join(directory, type, id), exist_ok = True)
