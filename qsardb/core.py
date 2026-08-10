@@ -27,6 +27,43 @@ class QDB(object):
 		self.containers = {type : [] for type in _CONTAINERS}
 		self.cargos = {type : {} for type in _CONTAINERS}
 
+	@classmethod
+	def load(cls, path):
+		if path.endswith(_ZIP_SUFFIXES):
+			directory = tempfile.mkdtemp()
+			with zipfile.ZipFile(path, "r") as archive:
+				archive.extractall(directory)
+			qdb = cls._load(directory)
+			shutil.rmtree(directory)
+		else:
+			qdb = cls._load(path)
+		return qdb
+
+	@classmethod
+	def _load(cls, directory):
+		attributes = cls._load_xml(os.path.join(directory, "archive.xml"))[0]
+		qdb = cls(attributes.get("Name"), attributes.get("Description"))
+
+		for type in _CONTAINERS:
+			path = os.path.join(directory, type, type + ".xml")
+			if not os.path.exists(path):
+				continue
+			for attributes in cls._load_xml(path):
+				cargos = {cargo_id : cls._load_cargo(directory, type, attributes["Id"], cargo_id) for cargo_id in attributes.get("Cargos", "").split()}
+				qdb.add(type, attributes, cargos)
+		return qdb
+
+	@classmethod
+	def _load_xml(cls, path):
+		root = ElementTree.parse(path).getroot()
+		containers = [root] if root.tag == "{%s}Archive" % _NAMESPACE else list(root)
+		return [{element.tag.split("}")[-1] : element.text for element in container} for container in containers]
+
+	@classmethod
+	def _load_cargo(cls, directory, type, id, cargo_id):
+		with open(os.path.join(directory, type, id, cargo_id), "r", encoding = "UTF-8") as file:
+			return file.read()
+
 	def add(self, type, attributes, cargos):
 		attributes = dict(attributes)
 		attributes["Cargos"] = " ".join(cargos.keys())
