@@ -1,23 +1,21 @@
 from pandas import DataFrame, Series
-from rdkit import Chem
 from sklearn.pipeline import Pipeline
 from sklearn2pmml import make_pmml_pipeline, sklearn2pmml
 
 import numpy
 import os
 import pandas
-import rdkit
 import shutil
 import sklearn
 import tempfile
 
 from qsardb.core import QDB, format_values
+from qsardb.rdkit import RDKitPipeline, format_inchis, rdkit_application
 
 class QDBPipeline(Pipeline):
 
 	def __init__(self, steps, memory = None, verbose = False):
 		super().__init__(steps, memory = memory, verbose = verbose)
-		self.set_output(transform = "pandas")
 		self.datasets = {}
 
 	def fit(self, X, y = None, **fit_params):
@@ -81,7 +79,7 @@ class QDBPipeline(Pipeline):
 
 	def _record(self, type, X, y, descriptors):
 		structures = X[X.columns[0]]
-		inchis = Series([Chem.MolToInchi(Chem.MolFromSmiles(smiles)) for smiles in structures], index = X.index, name = "InChI")
+		inchis = format_inchis(structures)
 		conflicting = sorted(inchis.groupby(level = 0).nunique().loc[lambda counts: counts > 1].index)
 		if conflicting:
 			raise ValueError("The %s set maps compound identifiers to more than one structure: %s" % (type, conflicting))
@@ -114,18 +112,21 @@ class QDBPipeline(Pipeline):
 		return None
 
 	def _descriptor_steps(self):
-		return Pipeline(self.steps[:self._boundary()])
+		self._check_boundary()
+		return self.steps[0][1]
 
 	def _estimator_steps(self):
-		return Pipeline(self.steps[self._boundary():])
+		self._check_boundary()
+		return Pipeline(self.steps[1:])
 
-	def _boundary(self):
-		positions = [position for position, (_, step) in enumerate(self.steps) if type(step).__module__.startswith("scikit_mol")]
-		if not positions:
-			raise ValueError("The pipeline must begin with scikit-mol steps")
-		if positions != list(range(len(positions))):
-			raise ValueError("The scikit-mol steps must precede all other steps")
-		return len(positions)
+	def _schema_step(self, steps):
+		while isinstance(steps, Pipeline):
+			steps = steps.steps[0][1]
+		return steps
+
+	def _check_boundary(self):
+		if not isinstance(self.steps[0][1], RDKitPipeline):
+			raise ValueError("The first step must be an RDKitPipeline")
 
 	def _merge(self, key):
 		parts = [dataset[key] for dataset in self.datasets.values() if dataset[key] is not None]
@@ -135,7 +136,7 @@ class QDBPipeline(Pipeline):
 	def _format_pmml(self, descriptor_ids):
 		active_fields = ["descriptors/" + id for id in descriptor_ids]
 		estimator_steps = self._estimator_steps()
-		schema_step = estimator_steps[0]
+		schema_step = self._schema_step(estimator_steps)
 		feature_names = getattr(schema_step, "feature_names_in_", None)
 
 		if feature_names is not None:
@@ -152,9 +153,6 @@ class QDBPipeline(Pipeline):
 			if feature_names is not None:
 				schema_step.feature_names_in_ = feature_names
 		return pmml
-
-def rdkit_application():
-	return "RDKit %s" % rdkit.__version__
 
 def sklearn_application():
 	return "Scikit-Learn %s" % sklearn.__version__
