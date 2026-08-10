@@ -15,6 +15,78 @@ NAMESPACE = "http://www.qsardb.org/QDB"
 
 ZIP_SUFFIXES = (".zip", ".qdb")
 
+CONTAINERS = {
+	"compounds" : ("CompoundRegistry", "Compound", ("Id", "Name", "Description", "Labels", "Cargos", "Cas", "InChI")),
+	"properties" : ("PropertyRegistry", "Property", ("Id", "Name", "Description", "Labels", "Cargos", "Endpoint", "Species")),
+	"descriptors" : ("DescriptorRegistry", "Descriptor", ("Id", "Name", "Description", "Labels", "Cargos", "Application")),
+	"models" : ("ModelRegistry", "Model", ("Id", "Name", "Description", "Labels", "Cargos", "PropertyId")),
+	"predictions" : ("PredictionRegistry", "Prediction", ("Id", "Name", "Description", "Labels", "Cargos", "ModelId", "Type", "Application"))
+}
+
+class QDB(object):
+
+	def __init__(self, name = None, description = None):
+		self.name = name
+		self.description = description
+		self.containers = {type : [] for type in CONTAINERS}
+		self.cargos = {type : {} for type in CONTAINERS}
+
+	def add(self, type, attributes, cargos):
+		attributes = dict(attributes)
+		attributes["Cargos"] = " ".join(cargos.keys())
+		self.containers[type].append(attributes)
+		self.cargos[type][attributes["Id"]] = cargos
+
+	def store(self, path):
+		if path.endswith(ZIP_SUFFIXES):
+			directory = tempfile.mkdtemp()
+			self._store(directory)
+			self._store_zip(directory, path)
+			shutil.rmtree(directory)
+		else:
+			self._store(path)
+		return path
+
+	def _store(self, directory):
+		if os.path.exists(directory):
+			shutil.rmtree(directory)
+		os.makedirs(directory)
+
+		self._store_xml(os.path.join(directory, "archive.xml"), "Archive", [{"Name" : self.name, "Description" : self.description}], ("Name", "Description"))
+
+		for type, (registry_tag, container_tag, order) in CONTAINERS.items():
+			if not self.containers[type]:
+				continue
+			self._store_xml(os.path.join(directory, type, type + ".xml"), registry_tag, self.containers[type], order, container_tag)
+			for id, cargos in self.cargos[type].items():
+				for cargo_id, payload in cargos.items():
+					self._store_cargo(directory, type, id, cargo_id, payload)
+
+	def _store_xml(self, path, registry_tag, containers, order, container_tag = None):
+		root = ElementTree.Element("{%s}%s" % (NAMESPACE, registry_tag))
+		for attributes in containers:
+			parent = root if container_tag is None else ElementTree.SubElement(root, "{%s}%s" % (NAMESPACE, container_tag))
+			for tag in order:
+				value = attributes.get(tag)
+				if value is not None:
+					ElementTree.SubElement(parent, "{%s}%s" % (NAMESPACE, tag)).text = str(value)
+		os.makedirs(os.path.dirname(path), exist_ok = True)
+		tree = ElementTree.ElementTree(root)
+		ElementTree.indent(tree)
+		tree.write(path, encoding = "UTF-8", xml_declaration = True, default_namespace = NAMESPACE)
+
+	def _store_cargo(self, directory, type, id, cargo_id, payload):
+		os.makedirs(os.path.join(directory, type, id), exist_ok = True)
+		with open(os.path.join(directory, type, id, cargo_id), "w", encoding = "UTF-8") as file:
+			file.write(payload)
+
+	def _store_zip(self, directory, path):
+		with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+			for parent, _, names in os.walk(directory):
+				for name in names:
+					file_path = os.path.join(parent, name)
+					archive.write(file_path, os.path.relpath(file_path, directory))
+
 class QsarDBPipeline(Pipeline):
 
 	def __init__(self, steps, memory = None, verbose = False):
@@ -48,14 +120,26 @@ class QsarDBPipeline(Pipeline):
 		if name is None:
 			name = self.property_id
 
-		if path.endswith(ZIP_SUFFIXES):
-			directory = tempfile.mkdtemp()
-			self._store(directory, name, description)
-			self._store_zip(directory, path)
-			shutil.rmtree(directory)
-		else:
-			self._store(path, name, description)
-		return path
+		qdb = QDB(name, description)
+
+		structures = self._merge("structures")
+		names = self._merge("names") if any(dataset["names"] is not None for dataset in self.datasets.values()) else None
+		for id, smiles in structures.items():
+			qdb.add("compounds", {"Id" : str(id), "Name" : None if names is None else names.get(id)}, {"daylight-smiles" : smiles})
+
+		property = self._merge("property")
+		qdb.add("properties", {"Id" : self.property_id, "Name" : self.property_id}, {"values" : format_values(self.property_id, property)})
+
+		descriptors = self._merge("descriptors")
+		for id in descriptors.columns:
+			qdb.add("descriptors", {"Id" : id, "Name" : id, "Application" : rdkit_application()}, {"values" : format_values(id, descriptors[id])})
+
+		qdb.add("models", {"Id" : "1", "Name" : name, "PropertyId" : self.property_id}, {"pmml" : self._format_pmml(descriptors.columns)})
+
+		for position, (type, dataset) in enumerate(self.datasets.items(), start = 1):
+			qdb.add("predictions", {"Id" : str(position), "Name" : type.capitalize() + " set", "ModelId" : "1", "Type" : type, "Application" : sklearn_application()}, {"values" : format_values(str(position), dataset["predictions"])})
+
+		return qdb.store(path)
 
 	def _check(self, X, y):
 		if not isinstance(X, DataFrame) or len(X.columns) < 1:
@@ -106,65 +190,6 @@ class QsarDBPipeline(Pipeline):
 		parts = [dataset[key] for dataset in self.datasets.values() if dataset[key] is not None]
 		merged = pandas.concat(parts)
 		return merged[~merged.index.duplicated(keep = "last")].sort_index()
-
-	def _store(self, directory, name, description):
-		if os.path.exists(directory):
-			shutil.rmtree(directory)
-		os.makedirs(directory)
-
-		self._store_xml(os.path.join(directory, "archive.xml"), "Archive", [{"Name" : name, "Description" : description}])
-
-		structures = self._merge("structures")
-		names = self._merge("names") if any(dataset["names"] is not None for dataset in self.datasets.values()) else None
-		compounds = [{"Id" : str(id), "Name" : None if names is None else names.get(id), "Cargos" : "daylight-smiles"} for id in structures.index]
-		self._store_registry(directory, "compounds", "CompoundRegistry", "Compound", compounds)
-		for id, smiles in structures.items():
-			self._store_cargo(directory, "compounds", str(id), "daylight-smiles", smiles)
-
-		property = self._merge("property")
-		self._store_registry(directory, "properties", "PropertyRegistry", "Property", [{"Id" : self.property_id, "Name" : self.property_id, "Cargos" : "values"}])
-		self._store_cargo(directory, "properties", self.property_id, "values", format_values(self.property_id, property))
-
-		descriptors = self._merge("descriptors")
-		self._store_registry(directory, "descriptors", "DescriptorRegistry", "Descriptor", [{"Id" : id, "Name" : id, "Cargos" : "values", "Application" : rdkit_application()} for id in descriptors.columns])
-		for id in descriptors.columns:
-			self._store_cargo(directory, "descriptors", id, "values", format_values(id, descriptors[id]))
-
-		self._store_registry(directory, "models", "ModelRegistry", "Model", [{"Id" : "1", "Name" : name, "Cargos" : "pmml", "PropertyId" : self.property_id}])
-		self._store_cargo(directory, "models", "1", "pmml", self._format_pmml(descriptors.columns))
-
-		predictions = []
-		for position, (type, dataset) in enumerate(self.datasets.items(), start = 1):
-			predictions.append({"Id" : str(position), "Name" : type.capitalize() + " set", "Cargos" : "values", "ModelId" : "1", "Type" : type, "Application" : sklearn_application()})
-			self._store_cargo(directory, "predictions", str(position), "values", format_values(str(position), dataset["predictions"]))
-		self._store_registry(directory, "predictions", "PredictionRegistry", "Prediction", predictions)
-
-	def _store_registry(self, directory, type, registry_tag, container_tag, containers):
-		self._store_xml(os.path.join(directory, type, type + ".xml"), registry_tag, containers, container_tag)
-
-	def _store_xml(self, path, registry_tag, containers, container_tag = None):
-		root = ElementTree.Element("{%s}%s" % (NAMESPACE, registry_tag))
-		for attributes in containers:
-			parent = root if container_tag is None else ElementTree.SubElement(root, "{%s}%s" % (NAMESPACE, container_tag))
-			for tag, value in attributes.items():
-				if value is not None:
-					ElementTree.SubElement(parent, "{%s}%s" % (NAMESPACE, tag)).text = str(value)
-		os.makedirs(os.path.dirname(path), exist_ok = True)
-		tree = ElementTree.ElementTree(root)
-		ElementTree.indent(tree)
-		tree.write(path, encoding = "UTF-8", xml_declaration = True, default_namespace = NAMESPACE)
-
-	def _store_cargo(self, directory, type, id, cargo_id, payload):
-		os.makedirs(os.path.join(directory, type, id), exist_ok = True)
-		with open(os.path.join(directory, type, id, cargo_id), "w", encoding = "UTF-8") as file:
-			file.write(payload)
-
-	def _store_zip(self, directory, path):
-		with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-			for parent, _, names in os.walk(directory):
-				for name in names:
-					file_path = os.path.join(parent, name)
-					archive.write(file_path, os.path.relpath(file_path, directory))
 
 	def _format_pmml(self, descriptor_ids):
 		pmml_pipeline = make_pmml_pipeline(self._estimator_steps(), active_fields = ["descriptors/" + id for id in descriptor_ids], target_fields = ["properties/" + self.property_id])
