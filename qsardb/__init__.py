@@ -4,6 +4,7 @@ from sklearn2pmml import make_pmml_pipeline, sklearn2pmml
 from xml.etree import ElementTree
 
 import os
+import pandas
 import rdkit
 import shutil
 import sklearn
@@ -19,26 +20,33 @@ class QsarDBPipeline(Pipeline):
 	def __init__(self, steps, memory = None, verbose = False):
 		super().__init__(steps, memory = memory, verbose = verbose)
 		self.set_output(transform = "pandas")
+		self.datasets = {}
 
 	def fit(self, X, y = None, **fit_params):
-		if not isinstance(X, DataFrame) or len(X.columns) < 1:
-			raise TypeError("X must be a DataFrame")
-		if not isinstance(y, Series) or y.name is None:
-			raise TypeError("y must be a named Series")
-		if not X.index.equals(y.index):
-			raise ValueError("X and y must share the same compound identifiers")
-
-		self.structures = X[X.columns[0]]
-		self.names = self._select_names(X)
-		self.property = y
-		self.descriptors = self._descriptor_steps().fit_transform(X[[X.columns[0]]])
-		self.descriptors.index = X.index
-		self._estimator_steps().fit(self.descriptors, y)
+		self._check(X, y)
+		descriptors = self._descriptor_steps().fit_transform(X[[X.columns[0]]])
+		descriptors.index = X.index
+		self.property_id = y.name
+		self.datasets = {}
+		self._estimator_steps().fit(descriptors, y)
+		self._record("training", X, y, descriptors)
 		return self
+
+	def validate(self, X, y = None):
+		self._check(X, y)
+		return self._record("validation", X, y, self._transform(X))
+
+	def test(self, X):
+		self._check(X, None)
+		return self._record("testing", X, None, self._transform(X))
+
+	def predict(self, X):
+		descriptors = self._transform(X)
+		return Series(self._estimator_steps().predict(descriptors), index = X.index, name = self.property_id)
 
 	def export(self, path, name = None, description = None):
 		if name is None:
-			name = self.property.name
+			name = self.property_id
 
 		if path.endswith(ZIP_SUFFIXES):
 			directory = tempfile.mkdtemp()
@@ -48,6 +56,31 @@ class QsarDBPipeline(Pipeline):
 		else:
 			self._store(path, name, description)
 		return path
+
+	def _check(self, X, y):
+		if not isinstance(X, DataFrame) or len(X.columns) < 1:
+			raise TypeError("X must be a DataFrame")
+		if y is not None:
+			if not isinstance(y, Series) or y.name is None:
+				raise TypeError("y must be a named Series")
+			if not X.index.equals(y.index):
+				raise ValueError("X and y must share the same compound identifiers")
+
+	def _record(self, type, X, y, descriptors):
+		predictions = Series(self._estimator_steps().predict(descriptors), index = X.index, name = self.property_id)
+		self.datasets[type] = {
+			"structures" : X[X.columns[0]],
+			"names" : self._select_names(X),
+			"property" : y,
+			"descriptors" : descriptors,
+			"predictions" : predictions
+		}
+		return predictions
+
+	def _transform(self, X):
+		descriptors = self._descriptor_steps().transform(X[[X.columns[0]]])
+		descriptors.index = X.index
+		return descriptors
 
 	def _select_names(self, X):
 		for column in X.columns[1:]:
@@ -69,6 +102,11 @@ class QsarDBPipeline(Pipeline):
 			raise ValueError("The scikit-mol steps must precede all other steps")
 		return len(positions)
 
+	def _merge(self, key):
+		parts = [dataset[key] for dataset in self.datasets.values() if dataset[key] is not None]
+		merged = pandas.concat(parts)
+		return merged[~merged.index.duplicated(keep = "last")].sort_index()
+
 	def _store(self, directory, name, description):
 		if os.path.exists(directory):
 			shutil.rmtree(directory)
@@ -76,26 +114,30 @@ class QsarDBPipeline(Pipeline):
 
 		self._store_xml(os.path.join(directory, "archive.xml"), "Archive", [{"Name" : name, "Description" : description}])
 
-		compounds = [{"Id" : str(id), "Name" : None if self.names is None else self.names[id], "Cargos" : "daylight-smiles"} for id in self.structures.index]
+		structures = self._merge("structures")
+		names = self._merge("names") if any(dataset["names"] is not None for dataset in self.datasets.values()) else None
+		compounds = [{"Id" : str(id), "Name" : None if names is None else names.get(id), "Cargos" : "daylight-smiles"} for id in structures.index]
 		self._store_registry(directory, "compounds", "CompoundRegistry", "Compound", compounds)
-		for id, smiles in self.structures.items():
+		for id, smiles in structures.items():
 			self._store_cargo(directory, "compounds", str(id), "daylight-smiles", smiles)
 
-		property_id = self.property.name
-		self._store_registry(directory, "properties", "PropertyRegistry", "Property", [{"Id" : property_id, "Name" : property_id, "Cargos" : "values"}])
-		self._store_cargo(directory, "properties", property_id, "values", format_values(property_id, self.property))
+		property = self._merge("property")
+		self._store_registry(directory, "properties", "PropertyRegistry", "Property", [{"Id" : self.property_id, "Name" : self.property_id, "Cargos" : "values"}])
+		self._store_cargo(directory, "properties", self.property_id, "values", format_values(self.property_id, property))
 
-		descriptors = [{"Id" : id, "Name" : id, "Cargos" : "values", "Application" : rdkit_application()} for id in self.descriptors.columns]
-		self._store_registry(directory, "descriptors", "DescriptorRegistry", "Descriptor", descriptors)
-		for id in self.descriptors.columns:
-			self._store_cargo(directory, "descriptors", id, "values", format_values(id, self.descriptors[id]))
+		descriptors = self._merge("descriptors")
+		self._store_registry(directory, "descriptors", "DescriptorRegistry", "Descriptor", [{"Id" : id, "Name" : id, "Cargos" : "values", "Application" : rdkit_application()} for id in descriptors.columns])
+		for id in descriptors.columns:
+			self._store_cargo(directory, "descriptors", id, "values", format_values(id, descriptors[id]))
 
-		self._store_registry(directory, "models", "ModelRegistry", "Model", [{"Id" : "1", "Name" : name, "Cargos" : "pmml", "PropertyId" : property_id}])
-		self._store_cargo(directory, "models", "1", "pmml", self._format_pmml(property_id))
+		self._store_registry(directory, "models", "ModelRegistry", "Model", [{"Id" : "1", "Name" : name, "Cargos" : "pmml", "PropertyId" : self.property_id}])
+		self._store_cargo(directory, "models", "1", "pmml", self._format_pmml(descriptors.columns))
 
-		predictions = Series(self._estimator_steps().predict(self.descriptors), index = self.descriptors.index)
-		self._store_registry(directory, "predictions", "PredictionRegistry", "Prediction", [{"Id" : "1", "Name" : "Training set", "Cargos" : "values", "ModelId" : "1", "Type" : "training", "Application" : sklearn_application()}])
-		self._store_cargo(directory, "predictions", "1", "values", format_values("1", predictions))
+		predictions = []
+		for position, (type, dataset) in enumerate(self.datasets.items(), start = 1):
+			predictions.append({"Id" : str(position), "Name" : type.capitalize() + " set", "Cargos" : "values", "ModelId" : "1", "Type" : type, "Application" : sklearn_application()})
+			self._store_cargo(directory, "predictions", str(position), "values", format_values(str(position), dataset["predictions"]))
+		self._store_registry(directory, "predictions", "PredictionRegistry", "Prediction", predictions)
 
 	def _store_registry(self, directory, type, registry_tag, container_tag, containers):
 		self._store_xml(os.path.join(directory, type, type + ".xml"), registry_tag, containers, container_tag)
@@ -124,8 +166,8 @@ class QsarDBPipeline(Pipeline):
 					file_path = os.path.join(parent, name)
 					archive.write(file_path, os.path.relpath(file_path, directory))
 
-	def _format_pmml(self, property_id):
-		pmml_pipeline = make_pmml_pipeline(self._estimator_steps(), active_fields = ["descriptors/" + id for id in self.descriptors.columns], target_fields = ["properties/" + property_id])
+	def _format_pmml(self, descriptor_ids):
+		pmml_pipeline = make_pmml_pipeline(self._estimator_steps(), active_fields = ["descriptors/" + id for id in descriptor_ids], target_fields = ["properties/" + self.property_id])
 		directory = tempfile.mkdtemp()
 		path = os.path.join(directory, "model.pmml")
 		sklearn2pmml(pmml_pipeline, path)
