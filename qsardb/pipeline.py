@@ -65,7 +65,7 @@ class QsarDBPipeline(Pipeline):
 		qdb.add("models", {"Id" : "1", "Name" : name, "PropertyId" : self.property_id}, {"pmml" : self._format_pmml(descriptors.columns)})
 
 		for position, (type, dataset) in enumerate(self.datasets.items(), start = 1):
-			qdb.add("predictions", {"Id" : str(position), "Name" : type.capitalize() + " set", "ModelId" : "1", "Type" : type, "Application" : sklearn_application()}, {"values" : format_values(str(position), dataset["predictions"])})
+			qdb.add("predictions", {"Id" : str(position), "Name" : type.capitalize() + " set", "ModelId" : "1", "Type" : type, "Application" : sklearn_application()}, {"values" : format_values(type.capitalize() + " set", dataset["predictions"])})
 
 		return qdb.store(path)
 

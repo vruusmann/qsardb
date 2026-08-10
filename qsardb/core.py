@@ -57,12 +57,16 @@ class QDB(object):
 	def _load_xml(cls, path):
 		root = ElementTree.parse(path).getroot()
 		containers = [root] if root.tag == "{%s}Archive" % _NAMESPACE else list(root)
-		return [{element.tag.split("}")[-1] : element.text for element in container} for container in containers]
+		return [{element.tag.split("}")[-1] : element.text for element in container if element.text is not None and element.text.strip()} for container in containers]
 
 	@classmethod
 	def _load_cargo(cls, directory, type, id, cargo_id):
-		with open(os.path.join(directory, type, id, cargo_id), "r", encoding = "UTF-8") as file:
-			return file.read()
+		with open(os.path.join(directory, type, id, cargo_id), "rb") as file:
+			payload = file.read()
+		try:
+			return payload.decode("UTF-8")
+		except UnicodeDecodeError:
+			return payload
 
 	def add(self, type, attributes, cargos):
 		attributes = dict(attributes)
@@ -110,8 +114,13 @@ class QDB(object):
 
 	def _store_cargo(self, directory, type, id, cargo_id, payload):
 		os.makedirs(os.path.join(directory, type, id), exist_ok = True)
-		with open(os.path.join(directory, type, id, cargo_id), "w", encoding = "UTF-8") as file:
-			file.write(payload)
+		path = os.path.join(directory, type, id, cargo_id)
+		if isinstance(payload, bytes):
+			with open(path, "wb") as file:
+				file.write(payload)
+		else:
+			with open(path, "w", encoding = "UTF-8") as file:
+				file.write(payload)
 
 	def _store_zip(self, directory, path):
 		with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -120,8 +129,8 @@ class QDB(object):
 					file_path = os.path.join(parent, name)
 					archive.write(file_path, os.path.relpath(file_path, directory))
 
-def format_values(id, values):
-	lines = ["Compound Id\t" + id]
+def format_values(header, values):
+	lines = ["Compound Id\t" + header]
 	for compound_id, value in values.items():
 		lines.append("%s\t%s" % (compound_id, round(float(value), 6)))
 	return "\n".join(lines)
