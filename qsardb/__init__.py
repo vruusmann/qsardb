@@ -1,6 +1,6 @@
 from pandas import DataFrame, Series
 from sklearn.pipeline import Pipeline
-from sklearn2pmml import sklearn2pmml
+from sklearn2pmml import make_pmml_pipeline, sklearn2pmml
 from xml.etree import ElementTree
 
 import os
@@ -33,7 +33,7 @@ class QsarDBPipeline(Pipeline):
 		self.property = y
 		self.descriptors = self._descriptor_steps().fit_transform(X[[X.columns[0]]])
 		self.descriptors.index = X.index
-		self._estimator_steps().fit(self._encoded_descriptors(), y)
+		self._estimator_steps().fit(self.descriptors, y)
 		return self
 
 	def export(self, path, name = None, description = None):
@@ -54,9 +54,6 @@ class QsarDBPipeline(Pipeline):
 			if column.lower() == "name":
 				return X[column]
 		return None
-
-	def _encoded_descriptors(self):
-		return self.descriptors.rename(columns = lambda id: "descriptors/" + id)
 
 	def _descriptor_steps(self):
 		return Pipeline(self.steps[:self._boundary()])
@@ -96,7 +93,7 @@ class QsarDBPipeline(Pipeline):
 		self._store_registry(directory, "models", "ModelRegistry", "Model", [{"Id" : "1", "Name" : name, "Cargos" : "pmml", "PropertyId" : property_id}])
 		self._store_cargo(directory, "models", "1", "pmml", self._format_pmml(property_id))
 
-		predictions = Series(self._estimator_steps().predict(self._encoded_descriptors()), index = self.descriptors.index)
+		predictions = Series(self._estimator_steps().predict(self.descriptors), index = self.descriptors.index)
 		self._store_registry(directory, "predictions", "PredictionRegistry", "Prediction", [{"Id" : "1", "Name" : "Training set", "Cargos" : "values", "ModelId" : "1", "Type" : "training", "Application" : sklearn_application()}])
 		self._store_cargo(directory, "predictions", "1", "values", format_values("1", predictions))
 
@@ -128,13 +125,14 @@ class QsarDBPipeline(Pipeline):
 					archive.write(file_path, os.path.relpath(file_path, directory))
 
 	def _format_pmml(self, property_id):
+		pmml_pipeline = make_pmml_pipeline(self._estimator_steps(), active_fields = ["descriptors/" + id for id in self.descriptors.columns], target_fields = ["properties/" + property_id])
 		directory = tempfile.mkdtemp()
 		path = os.path.join(directory, "model.pmml")
-		sklearn2pmml(self._estimator_steps(), path)
+		sklearn2pmml(pmml_pipeline, path)
 		with open(path, "r", encoding = "UTF-8") as file:
 			pmml = file.read()
 		shutil.rmtree(directory)
-		return pmml.replace("name=\"y\"", "name=\"properties/%s\"" % property_id)
+		return pmml
 
 def rdkit_application():
 	return "RDKit %s" % rdkit.__version__

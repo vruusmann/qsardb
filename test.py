@@ -20,6 +20,6 @@ pipeline = QsarDBPipeline([
 ])
 pipeline.fit(X, y)
 
-print("R2 = %.3f" % pipeline._estimator_steps().score(pipeline._encoded_descriptors(), y))
+print("R2 = %.3f" % pipeline._estimator_steps().score(pipeline.descriptors, y))
 
 pipeline.export("ESOL.qdb")
