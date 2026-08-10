@@ -3,6 +3,7 @@ from rdkit import Chem
 from sklearn.pipeline import Pipeline
 from sklearn2pmml import make_pmml_pipeline, sklearn2pmml
 
+import numpy
 import os
 import pandas
 import rdkit
@@ -132,13 +133,24 @@ class QDBPipeline(Pipeline):
 		return merged[~merged.index.duplicated(keep = "first")].sort_index()
 
 	def _format_pmml(self, descriptor_ids):
-		pmml_pipeline = make_pmml_pipeline(self._estimator_steps(), active_fields = ["descriptors/" + id for id in descriptor_ids], target_fields = ["properties/" + self.property_id])
-		directory = tempfile.mkdtemp()
-		path = os.path.join(directory, "model.pmml")
-		sklearn2pmml(pmml_pipeline, path)
-		with open(path, "r", encoding = "UTF-8") as file:
-			pmml = file.read()
-		shutil.rmtree(directory)
+		active_fields = ["descriptors/" + id for id in descriptor_ids]
+		estimator_steps = self._estimator_steps()
+		schema_step = estimator_steps[0]
+		feature_names = getattr(schema_step, "feature_names_in_", None)
+
+		if feature_names is not None:
+			schema_step.feature_names_in_ = numpy.asarray(active_fields)
+		try:
+			pmml_pipeline = make_pmml_pipeline(estimator_steps, active_fields = active_fields, target_fields = ["properties/" + self.property_id])
+			directory = tempfile.mkdtemp()
+			path = os.path.join(directory, "model.pmml")
+			sklearn2pmml(pmml_pipeline, path)
+			with open(path, "r", encoding = "UTF-8") as file:
+				pmml = file.read()
+			shutil.rmtree(directory)
+		finally:
+			if feature_names is not None:
+				schema_step.feature_names_in_ = feature_names
 		return pmml
 
 def rdkit_application():
