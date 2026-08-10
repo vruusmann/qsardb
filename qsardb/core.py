@@ -109,7 +109,7 @@ class QDB(object):
 					ElementTree.SubElement(parent, "{%s}%s" % (_NAMESPACE, tag)).text = str(value)
 		os.makedirs(os.path.dirname(path), exist_ok = True)
 		tree = ElementTree.ElementTree(root)
-		ElementTree.indent(tree)
+		ElementTree.indent(tree, space = "\t")
 		tree.write(path, encoding = "UTF-8", xml_declaration = True, default_namespace = _NAMESPACE)
 
 	def _store_cargo(self, directory, type, id, cargo_id, payload):
