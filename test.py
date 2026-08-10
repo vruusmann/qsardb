@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 
 import pandas
 
-from qsardb import QsarDBPipeline
+from qsardb import QDBPipeline
 
 RDLogger.DisableLog("rdApp.*")
 
@@ -20,7 +20,7 @@ y = dataset["logS"]
 
 X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size = 0.2, random_state = 13)
 
-pipeline = QsarDBPipeline([
+pipeline = QDBPipeline([
 	("parser", SmilesToMolTransformer()),
 	("descriptorizer", MolecularDescriptorTransformer(desc_list = ["MolLogP", "MolWt", "NumRotatableBonds", "NumAromaticRings"])),
 	("regressor", LinearRegression())

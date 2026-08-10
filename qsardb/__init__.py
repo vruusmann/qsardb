@@ -1,2 +1,2 @@
 from qsardb.core import QDB
-from qsardb.pipeline import QsarDBPipeline
+from qsardb.pipeline import QDBPipeline

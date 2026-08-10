@@ -12,7 +12,7 @@ import tempfile
 
 from qsardb.core import QDB, format_values
 
-class QsarDBPipeline(Pipeline):
+class QDBPipeline(Pipeline):
 
 	def __init__(self, steps, memory = None, verbose = False):
 		super().__init__(steps, memory = memory, verbose = verbose)
