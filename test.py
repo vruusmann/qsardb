@@ -1,4 +1,5 @@
 from pandas import RangeIndex
+from rdkit import RDLogger
 from scikit_mol.conversions import SmilesToMolTransformer
 from scikit_mol.descriptors import MolecularDescriptorTransformer
 from sklearn.linear_model import LinearRegression
@@ -8,6 +9,8 @@ from sklearn.model_selection import train_test_split
 import pandas
 
 from qsardb import QsarDBPipeline
+
+RDLogger.DisableLog("rdApp.*")
 
 dataset = pandas.read_csv("esol.csv")
 dataset.index = RangeIndex(start = 1, stop = len(dataset) + 1)

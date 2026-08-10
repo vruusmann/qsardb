@@ -1,4 +1,5 @@
 from pandas import DataFrame, Series
+from rdkit import Chem
 from sklearn.pipeline import Pipeline
 from sklearn2pmml import make_pmml_pipeline, sklearn2pmml
 
@@ -46,10 +47,13 @@ class QsarDBPipeline(Pipeline):
 
 		qdb = QDB(name, description)
 
+		self._check_collisions()
+
 		structures = self._merge("structures")
+		inchis = self._merge("inchis")
 		names = self._merge("names") if any(dataset["names"] is not None for dataset in self.datasets.values()) else None
 		for id, smiles in structures.items():
-			qdb.add("compounds", {"Id" : str(id), "Name" : None if names is None else names.get(id)}, {"daylight-smiles" : smiles})
+			qdb.add("compounds", {"Id" : str(id), "Name" : None if names is None else names.get(id), "InChI" : inchis[id]}, {"daylight-smiles" : smiles})
 
 		property = self._merge("property")
 		qdb.add("properties", {"Id" : self.property_id, "Name" : self.property_id}, {"values" : format_values(self.property_id, property)})
@@ -75,15 +79,27 @@ class QsarDBPipeline(Pipeline):
 				raise ValueError("X and y must share the same compound identifiers")
 
 	def _record(self, type, X, y, descriptors):
+		structures = X[X.columns[0]]
+		inchis = Series([Chem.MolToInchi(Chem.MolFromSmiles(smiles)) for smiles in structures], index = X.index, name = "InChI")
+		conflicting = sorted(inchis.groupby(level = 0).nunique().loc[lambda counts: counts > 1].index)
+		if conflicting:
+			raise ValueError("The %s set maps compound identifiers to more than one structure: %s" % (type, conflicting))
 		predictions = Series(self._estimator_steps().predict(descriptors), index = X.index, name = self.property_id)
 		self.datasets[type] = {
-			"structures" : X[X.columns[0]],
+			"structures" : structures,
+			"inchis" : inchis,
 			"names" : self._select_names(X),
 			"property" : y,
 			"descriptors" : descriptors,
 			"predictions" : predictions
 		}
 		return predictions
+
+	def _check_collisions(self):
+		inchis = pandas.concat([dataset["inchis"] for dataset in self.datasets.values()])
+		conflicting = sorted(inchis.groupby(level = 0).nunique().loc[lambda counts: counts > 1].index)
+		if conflicting:
+			raise ValueError("The datasets map compound identifiers to more than one structure: %s" % conflicting)
 
 	def _transform(self, X):
 		descriptors = self._descriptor_steps().transform(X[[X.columns[0]]])
@@ -113,7 +129,7 @@ class QsarDBPipeline(Pipeline):
 	def _merge(self, key):
 		parts = [dataset[key] for dataset in self.datasets.values() if dataset[key] is not None]
 		merged = pandas.concat(parts)
-		return merged[~merged.index.duplicated(keep = "last")].sort_index()
+		return merged[~merged.index.duplicated(keep = "first")].sort_index()
 
 	def _format_pmml(self, descriptor_ids):
 		pmml_pipeline = make_pmml_pipeline(self._estimator_steps(), active_fields = ["descriptors/" + id for id in descriptor_ids], target_fields = ["properties/" + self.property_id])
