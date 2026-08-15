@@ -1,3 +1,25 @@
-*.csv
+# Archives and datasets
 *.qdb
 *.qdb.zip
+*.csv
+!examples/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Environments
+.venv/
+venv/
+
+# Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store
