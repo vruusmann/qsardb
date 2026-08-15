@@ -15,6 +15,8 @@ _CONTAINERS = {
 	"predictions" : ("PredictionRegistry", "Prediction", _CONTAINER_ATTRIBUTES + ("ModelId", "Type", "Application"))
 }
 
+_NA = "N/A"
+
 _NAMESPACE = "http://www.qsardb.org/QDB"
 
 _ZIP_SUFFIXES = (".zip", ".qdb")
@@ -155,8 +157,13 @@ class QDB(object):
 					file_path = os.path.join(parent, name)
 					archive.write(file_path, os.path.relpath(file_path, directory))
 
+def format_value(value):
+	if value is None or value != value:
+		return _NA
+	return str(value)
+
 def format_values(header, values):
 	lines = ["Compound Id\t" + header]
-	for compound_id, value in values.items():
-		lines.append("%s\t%s" % (compound_id, round(float(value), 6)))
+	for compound_id, value in zip(values.index, values.to_numpy()):
+		lines.append("%s\t%s" % (compound_id, format_value(value)))
 	return "\n".join(lines)
