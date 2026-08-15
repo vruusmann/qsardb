@@ -9,7 +9,9 @@ import pandas
 from qsardb.pipeline import DescriptorPipeline
 
 class MordredPipeline(DescriptorPipeline):
-	pass
+
+	def application_name(self):
+		return mordred_application()
 
 class MordredDescriptorTransformer(BaseEstimator, TransformerMixin):
 

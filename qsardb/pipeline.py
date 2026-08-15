@@ -1,12 +1,12 @@
 from pandas import DataFrame, Series
 from rdkit import Chem
+from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn2pmml import make_pmml_pipeline, sklearn2pmml
 
 import numpy
 import os
 import pandas
-import rdkit
 import shutil
 import sklearn
 import tempfile
@@ -18,6 +18,22 @@ class DescriptorPipeline(Pipeline):
 	def __init__(self, steps, memory = None, verbose = False):
 		super().__init__(steps, memory = memory, verbose = verbose)
 		self.set_output(transform = "pandas")
+
+	def application_name(self):
+		return None
+
+	def get_feature_names_out(self, input_features = None):
+		return numpy.asarray([str(name) for name in super().get_feature_names_out(input_features)], dtype = object)
+
+	def applications_out(self):
+		names = self.get_feature_names_out()
+		application = self.application_name()
+		if application is not None:
+			return {name : application for name in names}
+		applications = _applications_out(self.steps[-1][1])
+		if len(applications) != len(names):
+			raise ValueError("The pipeline reports %d applications for %d descriptors" % (len(applications), len(names)))
+		return dict(zip(names, applications))
 
 class QDBPipeline(Pipeline):
 
@@ -65,8 +81,9 @@ class QDBPipeline(Pipeline):
 		qdb.add("properties", {"Id" : self.property_id, "Name" : self.property_id}, {"values" : format_values(self.property_id, property)})
 
 		descriptors = self._merge("descriptors")
+		applications = self._descriptor_steps().applications_out()
 		for id in descriptors.columns:
-			qdb.add("descriptors", {"Id" : id, "Name" : id, "Application" : rdkit_application()}, {"values" : format_values(id, descriptors[id])})
+			qdb.add("descriptors", {"Id" : id, "Name" : id, "Application" : applications.get(id)}, {"values" : format_values(id, descriptors[id])})
 
 		qdb.add("models", {"Id" : "1", "Name" : name, "PropertyId" : self.property_id}, {"pmml" : self._format_pmml(descriptors.columns)})
 
@@ -161,8 +178,19 @@ class QDBPipeline(Pipeline):
 				schema_step.feature_names_in_ = feature_names
 		return pmml
 
-def rdkit_application():
-	return "RDKit %s" % rdkit.__version__
+def _applications_out(step):
+	if isinstance(step, DescriptorPipeline):
+		return list(step.applications_out().values())
+	if isinstance(step, ColumnTransformer):
+		applications = []
+		for name, transformer, columns in step.transformers_:
+			if transformer in ("drop", "passthrough"):
+				continue
+			applications.extend(_applications_out(transformer))
+		return applications
+	if isinstance(step, Pipeline):
+		return _applications_out(step.steps[-1][1])
+	return [None] * len(step.get_feature_names_out())
 
 def sklearn_application():
 	return "Scikit-Learn %s" % sklearn.__version__
