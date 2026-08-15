@@ -17,6 +17,8 @@ import tempfile
 
 from qsardb.core import QDB, format_values
 
+_PICKLE_PROTOCOL = 4
+
 class DescriptorPipeline(Pipeline):
 
 	def __init__(self, steps, memory = None, verbose = False):
@@ -91,7 +93,7 @@ class QDBPipeline(Pipeline):
 		for id in descriptors.columns:
 			qdb.add("descriptors", {"Id" : id, "Name" : id, "Application" : applications.get(id)}, {"values" : format_values(id, descriptors[id])})
 
-		qdb.add("models", {"Id" : "1", "Name" : name, "PropertyId" : self.property_id}, {"pmml" : self._format_pmml(descriptors.columns)})
+		qdb.add("models", {"Id" : "1", "Name" : name, "PropertyId" : self.property_id}, {"pkl" : self._format_pickle(), "pmml" : self._format_pmml(descriptors.columns)})
 
 		for position, (type, dataset) in enumerate(self.datasets.items(), start = 1):
 			qdb.add("predictions", {"Id" : str(position), "Name" : type.capitalize() + " set", "ModelId" : "1", "Type" : type, "Application" : sklearn_application()}, {"values" : format_values(type.capitalize() + " set", dataset["predictions"])})
@@ -162,6 +164,9 @@ class QDBPipeline(Pipeline):
 		parts = [dataset[key] for dataset in self.datasets.values() if dataset[key] is not None]
 		merged = pandas.concat(parts)
 		return merged[~merged.index.duplicated(keep = "first")].sort_index()
+
+	def _format_pickle(self):
+		return pickle.dumps(self._estimator_steps(), protocol = _PICKLE_PROTOCOL)
 
 	def _format_pmml(self, descriptor_ids):
 		active_fields = ["descriptors/" + id for id in descriptor_ids]
