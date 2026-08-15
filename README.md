@@ -107,6 +107,19 @@ model.predict(structures)                   # from structures
 model[1:].predict(descriptor_values)        # from stored descriptor values
 ```
 
+`QDBPipeline.load` wraps that pickle back into a `QDBPipeline`, so a loaded archive predicts through the same interface it was trained with.
+It accepts an archive path or an already loaded `QDB`:
+
+```python
+from qsardb import QDBPipeline
+
+pipeline = QDBPipeline.load("model.qdb.zip")
+pipeline.predict(structures)
+```
+
+The result is a `Series` indexed by the identifiers of the structures passed in and named after the property.
+An archive holding more than one model raises unless a `model_id` is given.
+
 Each descriptor container carries a `pkl` of its own, a pipeline that takes structures and returns that one descriptor.
 
 `requirements.txt` at the archive root pins the packages needed to unpickle these and call them.

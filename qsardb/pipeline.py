@@ -83,6 +83,26 @@ class QDBPipeline(Pipeline):
 		descriptors = self._transform(X)
 		return Series(self._estimator_steps().predict(descriptors), index = X.index, name = self.property_id)
 
+	@classmethod
+	def load(cls, source, model_id = None):
+		qdb = source if isinstance(source, QDB) else QDB.load(source)
+
+		models = {model["Id"] : model for model in qdb.containers["models"]}
+		if model_id is None:
+			if len(models) != 1:
+				raise ValueError("The archive holds %d models, one of %s must be chosen" % (len(models), sorted(models)))
+			model_id = list(models)[0]
+		if model_id not in models:
+			raise ValueError("The archive holds no model %s, but %s" % (model_id, sorted(models)))
+
+		cargos = qdb.cargos["models"][model_id]
+		if "pkl" not in cargos:
+			raise ValueError("The model %s carries no pkl cargo, but %s" % (model_id, sorted(cargos)))
+
+		pipeline = cls(pickle.loads(cargos["pkl"]).steps)
+		pipeline.property_id = models[model_id]["PropertyId"]
+		return pipeline
+
 	def export(self, path, name = None, description = None):
 		if name is None:
 			name = self.property_id
