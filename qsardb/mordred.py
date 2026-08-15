@@ -6,9 +6,9 @@ import importlib.metadata
 import numpy
 import pandas
 
-from qsardb.rdkit import RDKitPipeline
+from qsardb.pipeline import DescriptorPipeline
 
-class MordredPipeline(RDKitPipeline):
+class MordredPipeline(DescriptorPipeline):
 	pass
 
 class MordredDescriptorTransformer(BaseEstimator, TransformerMixin):

@@ -1,16 +1,23 @@
 from pandas import DataFrame, Series
+from rdkit import Chem
 from sklearn.pipeline import Pipeline
 from sklearn2pmml import make_pmml_pipeline, sklearn2pmml
 
 import numpy
 import os
 import pandas
+import rdkit
 import shutil
 import sklearn
 import tempfile
 
 from qsardb.core import QDB, format_values
-from qsardb.rdkit import RDKitPipeline, format_inchis, rdkit_application
+
+class DescriptorPipeline(Pipeline):
+
+	def __init__(self, steps, memory = None, verbose = False):
+		super().__init__(steps, memory = memory, verbose = verbose)
+		self.set_output(transform = "pandas")
 
 class QDBPipeline(Pipeline):
 
@@ -125,8 +132,8 @@ class QDBPipeline(Pipeline):
 		return steps
 
 	def _check_boundary(self):
-		if not isinstance(self.steps[0][1], RDKitPipeline):
-			raise ValueError("The first step must be an RDKitPipeline")
+		if not isinstance(self.steps[0][1], DescriptorPipeline):
+			raise ValueError("The first step must be a DescriptorPipeline")
 
 	def _merge(self, key):
 		parts = [dataset[key] for dataset in self.datasets.values() if dataset[key] is not None]
@@ -154,6 +161,12 @@ class QDBPipeline(Pipeline):
 				schema_step.feature_names_in_ = feature_names
 		return pmml
 
+def rdkit_application():
+	return "RDKit %s" % rdkit.__version__
+
 def sklearn_application():
 	return "Scikit-Learn %s" % sklearn.__version__
+
+def format_inchis(structures):
+	return Series([Chem.MolToInchi(Chem.MolFromSmiles(smiles)) for smiles in structures], index = structures.index, name = "InChI")
 
