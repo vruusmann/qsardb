@@ -14,8 +14,8 @@ class MordredPipeline(DescriptorPipeline):
 	def application_name(self):
 		return mordred_application()
 
-	def descriptor_pipeline(self, name):
-		return make_mordred_pipeline(names = [name], n_jobs = self.n_jobs())
+	def descriptor_pipeline(self, names):
+		return make_mordred_pipeline(names = list(names), n_jobs = self.n_jobs())
 
 class MordredDescriptorTransformer(BaseEstimator, NoFitNeededMixin, TransformerMixin):
 

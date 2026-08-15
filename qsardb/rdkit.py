@@ -10,8 +10,8 @@ class RDKitPipeline(DescriptorPipeline):
 	def application_name(self):
 		return rdkit_application()
 
-	def descriptor_pipeline(self, name):
-		return make_rdkit_pipeline(names = [name], n_jobs = self.n_jobs())
+	def descriptor_pipeline(self, names):
+		return make_rdkit_pipeline(names = list(names), n_jobs = self.n_jobs())
 
 def make_rdkit_pipeline(names = None, n_jobs = 1):
 	return RDKitPipeline([

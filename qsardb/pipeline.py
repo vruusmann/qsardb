@@ -7,8 +7,9 @@ from sklearn2pmml import make_pmml_pipeline, sklearn2pmml
 import importlib.metadata
 import numpy
 import os
-import pickle
 import pandas
+import pickle
+import re
 import shutil
 import sklearn
 import subprocess
@@ -28,18 +29,17 @@ class DescriptorPipeline(Pipeline):
 	def application_name(self):
 		return None
 
-	def descriptor_pipeline(self, name):
+	def descriptor_pipeline(self, names):
 		return None
 
 	def n_jobs(self):
 		return getattr(self.steps[-1][1], "n_jobs", 1)
 
-	def descriptor_pipelines_out(self):
-		names = self.get_feature_names_out()
-		derived = {name : self.descriptor_pipeline(name) for name in names}
-		if any(pipeline is not None for pipeline in derived.values()):
-			return derived
-		return _descriptor_pipelines_out(self.steps[-1][1], names)
+	def narrow(self, names):
+		narrowed = self.descriptor_pipeline(names)
+		if narrowed is not None:
+			return narrowed
+		return _narrow(self.steps[-1][1], names)
 
 
 	def get_feature_names_out(self, input_features = None):
@@ -103,11 +103,11 @@ class QDBPipeline(Pipeline):
 
 		descriptors = self._merge("descriptors")
 		applications = self._descriptor_steps().applications_out()
-		derived = self._descriptor_steps().descriptor_pipelines_out()
 		for id in descriptors.columns:
 			cargos = {"values" : format_values(id, descriptors[id])}
-			if derived.get(id) is not None:
-				cargos["pkl"] = pickle.dumps(derived[id], protocol = _PICKLE_PROTOCOL)
+			narrowed = self._descriptor_steps().narrow([id])
+			if narrowed is not None:
+				cargos["pkl"] = pickle.dumps(narrowed, protocol = _PICKLE_PROTOCOL)
 			qdb.add("descriptors", {"Id" : id, "Name" : id, "Application" : applications.get(id)}, cargos)
 
 		qdb.add("models", {"Id" : "1", "Name" : name, "PropertyId" : self.property_id}, {"pkl" : self._format_pickle(), "pmml" : self._format_pmml(descriptors.columns)})
@@ -182,8 +182,16 @@ class QDBPipeline(Pipeline):
 		merged = pandas.concat(parts)
 		return merged[~merged.index.duplicated(keep = "first")].sort_index()
 
+	def used_descriptors(self):
+		return _used_descriptors(self._format_pmml(self.datasets["training"]["descriptors"].columns))
+
 	def _format_pickle(self):
-		return pickle.dumps(self._estimator_steps(), protocol = _PICKLE_PROTOCOL)
+		narrowed = self._descriptor_steps().narrow(list(self.datasets["training"]["descriptors"].columns))
+		if narrowed is None:
+			narrowed = self._descriptor_steps()
+		else:
+			narrowed.fit(self.datasets["training"]["structures"].to_frame())
+		return pickle.dumps(Pipeline([("descriptors", narrowed)] + list(self._estimator_steps().steps)), protocol = _PICKLE_PROTOCOL)
 
 	def _format_pmml(self, descriptor_ids):
 		active_fields = ["descriptors/" + id for id in descriptor_ids]
@@ -241,18 +249,29 @@ def format_requirements(estimator):
 	distributions = _prune(_distributions(_capture_modules(estimator))) - {"qsardb", "pip", "setuptools"}
 	return "\n".join("%s==%s" % (distribution, importlib.metadata.version(distribution)) for distribution in sorted(distributions)) + "\n"
 
-def _descriptor_pipelines_out(step, names):
+def _used_descriptors(pmml):
+	return {name[len("descriptors/"):] for name in re.findall(r"<DataField name=\"([^\"]+)\"", pmml) if name.startswith("descriptors/")}
+
+def _narrow(step, names):
 	if isinstance(step, DescriptorPipeline):
-		return step.descriptor_pipelines_out()
+		return step.narrow(names)
 	if isinstance(step, ColumnTransformer):
-		derived = {}
-		for name, transformer, columns in step.transformers_:
-			if transformer not in ("drop", "passthrough"):
-				derived.update(_descriptor_pipelines_out(transformer, transformer.get_feature_names_out()))
-		return derived
+		branches = []
+		for branch, transformer, columns in step.transformers_:
+			if transformer in ("drop", "passthrough"):
+				continue
+			selected = [name for name in names if name in set(transformer.get_feature_names_out())]
+			if selected:
+				narrowed = _narrow(transformer, selected)
+				if narrowed is None:
+					return None
+				branches.append((branch, narrowed, columns))
+		if not branches:
+			return None
+		return DescriptorPipeline([("descriptorizer", ColumnTransformer(branches, verbose_feature_names_out = False))])
 	if isinstance(step, Pipeline):
-		return _descriptor_pipelines_out(step.steps[-1][1], names)
-	return {name : None for name in names}
+		return _narrow(step.steps[-1][1], names)
+	return None
 
 def _applications_out(step):
 	if isinstance(step, DescriptorPipeline):
