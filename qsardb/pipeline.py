@@ -84,9 +84,7 @@ class QDBPipeline(Pipeline):
 		return Series(self._estimator_steps().predict(descriptors), index = X.index, name = self.property_id)
 
 	@classmethod
-	def load(cls, source, model_id = None):
-		qdb = source if isinstance(source, QDB) else QDB.load(source)
-
+	def from_qdb(cls, qdb, model_id = None):
 		models = {model["Id"] : model for model in qdb.containers["models"]}
 		if model_id is None:
 			if len(models) != 1:
@@ -103,7 +101,7 @@ class QDBPipeline(Pipeline):
 		pipeline.property_id = models[model_id]["PropertyId"]
 		return pipeline
 
-	def export(self, path, name = None, description = None):
+	def to_qdb(self, name = None, description = None):
 		if name is None:
 			name = self.property_id
 
@@ -135,7 +133,7 @@ class QDBPipeline(Pipeline):
 		for position, (type, dataset) in enumerate(self.datasets.items(), start = 1):
 			qdb.add("predictions", {"Id" : str(position), "Name" : type.capitalize() + " set", "ModelId" : "1", "Type" : type, "Application" : sklearn_application()}, {"values" : format_values(type.capitalize() + " set", dataset["predictions"])})
 
-		return qdb.store(path)
+		return qdb
 
 	def _check(self, X, y):
 		if not isinstance(X, DataFrame) or len(X.columns) < 1:

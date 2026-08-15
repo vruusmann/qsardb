@@ -79,4 +79,4 @@ print("descriptors used by the model:")
 for name, value in sorted(gain.items(), key = lambda item: -item[1]):
 	print("\t%-24s %5.1f%%  %s" % (name, 100 * value / total, applications.get(name)))
 
-pipeline.export("ESOL-joint.qdb.zip", name = "logS, RDKit and Mordred descriptors combined")
+pipeline.to_qdb(name = "logS, RDKit and Mordred descriptors combined").store("ESOL-joint.qdb.zip")

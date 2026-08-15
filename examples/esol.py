@@ -45,4 +45,4 @@ validation = pipeline.validate(X_valid, y_valid)
 print("Training R2 = %.3f" % r2_score(y_train, pipeline.predict(X_train)))
 print("Validation R2 = %.3f" % r2_score(y_valid, validation))
 
-pipeline.export("ESOL.qdb.zip")
+pipeline.to_qdb().store("ESOL.qdb.zip")

@@ -47,7 +47,7 @@ pipeline = QDBPipeline([
 ])
 pipeline.fit(X, y)
 pipeline.validate(X_valid, y_valid)
-pipeline.export("model.qdb.zip")
+pipeline.to_qdb().store("model.qdb.zip")
 ```
 
 `X` is a `DataFrame` whose first column holds structures; a column named `Name` is picked up as the compound name.
@@ -55,7 +55,8 @@ pipeline.export("model.qdb.zip")
 `fit`, `validate` and `test` record the three `Prediction` types.
 Compound identity is checked by InChI, so an identifier mapping to more than one structure is an error.
 
-`export` writes the compounds with their structures and InChI, the property, the descriptor values, the model, and one prediction container per recorded set.
+`to_qdb` converts the fitted pipeline into a `QDB` holding the compounds with their structures and InChI, the property, the descriptor values, the model, and one prediction container per recorded set.
+File handling stays with `QDB`, so the archive is written by `store` and further containers can be added first.
 Descriptor values are stored as computed; anything derived from them - ratios, products, scaling - lives in the PMML as derived fields.
 Field names in the PMML are namespaced as `descriptors/{id}` and `properties/{id}`, while the pickles use the plain descriptor identifiers.
 
@@ -76,7 +77,7 @@ descriptors = DescriptorPipeline([
 ])
 ```
 
-`applications_out()` reports the application per descriptor, and `export` writes it as the `Application` attribute.
+`applications_out()` reports the application per descriptor, and `to_qdb` writes it as the `Application` attribute.
 A descriptor whose application cannot be determined is written without one.
 
 A `DescriptorPipeline` can also be assembled by hand from any transformer that takes structures and returns named columns.
@@ -91,7 +92,7 @@ pipeline.fit(X_train, y_train)
 used = pipeline.used_descriptors()
 ```
 
-Doing this before `export` keeps the archive to the descriptors that matter, and keeps the stored descriptor values aligned with what the model consumes.
+Doing this before `to_qdb` keeps the archive to the descriptors that matter, and keeps the stored descriptor values aligned with what the model consumes.
 `examples/esol-joint.py` narrows 1618 descriptors to 24 this way.
 
 ## Executing an archive
@@ -107,13 +108,12 @@ model.predict(structures)                   # from structures
 model[1:].predict(descriptor_values)        # from stored descriptor values
 ```
 
-`QDBPipeline.load` wraps that pickle back into a `QDBPipeline`, so a loaded archive predicts through the same interface it was trained with.
-It accepts an archive path or an already loaded `QDB`:
+`QDBPipeline.from_qdb` wraps that pickle back into a `QDBPipeline`, so a loaded archive predicts through the same interface it was trained with:
 
 ```python
-from qsardb import QDBPipeline
+from qsardb import QDB, QDBPipeline
 
-pipeline = QDBPipeline.load("model.qdb.zip")
+pipeline = QDBPipeline.from_qdb(QDB.load("model.qdb.zip"))
 pipeline.predict(structures)
 ```
 
