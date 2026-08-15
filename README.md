@@ -76,11 +76,12 @@ A `DescriptorPipeline` can also be assembled by hand from any transformer that t
 
 ## Examples
 
-`esol.py` fits a linear model of aqueous solubility on RDKit descriptors, with a derived field computed from two of them, and exports an archive.
+`examples/esol.py` fits a linear model of aqueous solubility on RDKit descriptors, with a derived field computed from two of them, and exports an archive.
 
-`esol-joint.py` combines RDKit and Mordred descriptors, fits a gradient boosted model, and reports which software each selected descriptor came from.
+`examples/esol-joint.py` combines RDKit and Mordred descriptors, fits a gradient boosted model, and reports which software each selected descriptor came from.
 
-Both read `esol.csv`.
+Both read `esol.csv` and write their archive alongside it, so run them from within `examples`.
+They need `xgboost` in addition to the package requirements.
 
 ## Not yet
 
