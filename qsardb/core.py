@@ -24,6 +24,7 @@ class QDB(object):
 	def __init__(self, name = None, description = None):
 		self.name = name
 		self.description = description
+		self.files = {}
 		self.containers = {type : [] for type in _CONTAINERS}
 		self.cargos = {type : {} for type in _CONTAINERS}
 
@@ -44,6 +45,11 @@ class QDB(object):
 		attributes = cls._load_xml(os.path.join(directory, "archive.xml"))[0]
 		qdb = cls(attributes.get("Name"), attributes.get("Description"))
 
+		for name in sorted(os.listdir(directory)):
+			path = os.path.join(directory, name)
+			if name != "archive.xml" and os.path.isfile(path):
+				qdb.files[name] = cls._load_file(path)
+
 		for type in _CONTAINERS:
 			path = os.path.join(directory, type, type + ".xml")
 			if not os.path.exists(path):
@@ -52,6 +58,15 @@ class QDB(object):
 				cargos = {cargo_id : cls._load_cargo(directory, type, attributes["Id"], cargo_id) for cargo_id in attributes.get("Cargos", "").split()}
 				qdb.add(type, attributes, cargos)
 		return qdb
+
+	@classmethod
+	def _load_file(cls, path):
+		with open(path, "rb") as file:
+			payload = file.read()
+		try:
+			return payload.decode("UTF-8")
+		except UnicodeDecodeError:
+			return payload
 
 	@classmethod
 	def _load_xml(cls, path):
@@ -91,6 +106,9 @@ class QDB(object):
 
 		self._store_xml(os.path.join(directory, "archive.xml"), "Archive", [{"Name" : self.name, "Description" : self.description}], ("Name", "Description"))
 
+		for name, payload in self.files.items():
+			self._store_file(os.path.join(directory, name), payload)
+
 		for type, (registry_tag, container_tag, order) in _CONTAINERS.items():
 			if not self.containers[type]:
 				continue
@@ -111,6 +129,14 @@ class QDB(object):
 		tree = ElementTree.ElementTree(root)
 		ElementTree.indent(tree, space = "\t")
 		tree.write(path, encoding = "UTF-8", xml_declaration = True, default_namespace = _NAMESPACE)
+
+	def _store_file(self, path, payload):
+		if isinstance(payload, bytes):
+			with open(path, "wb") as file:
+				file.write(payload)
+		else:
+			with open(path, "w", encoding = "UTF-8") as file:
+				file.write(payload)
 
 	def _store_cargo(self, directory, type, id, cargo_id, payload):
 		os.makedirs(os.path.join(directory, type, id), exist_ok = True)

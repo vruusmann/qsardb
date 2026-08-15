@@ -4,11 +4,15 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn2pmml import make_pmml_pipeline, sklearn2pmml
 
+import importlib.metadata
 import numpy
 import os
+import pickle
 import pandas
 import shutil
 import sklearn
+import subprocess
+import sys
 import tempfile
 
 from qsardb.core import QDB, format_values
@@ -21,6 +25,7 @@ class DescriptorPipeline(Pipeline):
 
 	def application_name(self):
 		return None
+
 
 	def get_feature_names_out(self, input_features = None):
 		return numpy.asarray([str(name) for name in super().get_feature_names_out(input_features)], dtype = object)
@@ -68,6 +73,7 @@ class QDBPipeline(Pipeline):
 			name = self.property_id
 
 		qdb = QDB(name, description)
+		qdb.files["requirements.txt"] = format_requirements(self)
 
 		self._check_collisions()
 
@@ -180,6 +186,38 @@ class QDBPipeline(Pipeline):
 			if feature_names is not None:
 				schema_step.feature_names_in_ = feature_names
 		return pmml
+
+def _distributions(names):
+	mapping = importlib.metadata.packages_distributions()
+	return {distribution.lower() for name in names for distribution in mapping.get(name, [])}
+
+def _requires(distribution):
+	names = set()
+	for requirement in importlib.metadata.requires(distribution) or []:
+		if "extra ==" not in requirement:
+			names.add(requirement.split(";")[0].split()[0].split(">")[0].split("<")[0].split("=")[0].split("[")[0].strip().lower())
+	return names
+
+def _prune(distributions):
+	required = set()
+	for distribution in distributions:
+		required.update(_requires(distribution))
+	return distributions - required
+
+_CAPTURE = "import pickle, sys; pickle.load(open(sys.argv[1], 'rb')); print(' '.join(sorted({name.split('.')[0] for name in sys.modules})))"
+
+def _capture_modules(estimator):
+	directory = tempfile.mkdtemp()
+	path = os.path.join(directory, "estimator.pkl")
+	with open(path, "wb") as file:
+		pickle.dump(estimator, file)
+	modules = subprocess.check_output([sys.executable, "-c", _CAPTURE, path], text = True).split()
+	shutil.rmtree(directory)
+	return set(modules)
+
+def format_requirements(estimator):
+	distributions = _prune(_distributions(_capture_modules(estimator))) - {"qsardb", "pip", "setuptools"}
+	return "\n".join("%s==%s" % (distribution, importlib.metadata.version(distribution)) for distribution in sorted(distributions)) + "\n"
 
 def _applications_out(step):
 	if isinstance(step, DescriptorPipeline):
