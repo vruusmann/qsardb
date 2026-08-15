@@ -10,10 +10,13 @@ class RDKitPipeline(DescriptorPipeline):
 	def application_name(self):
 		return rdkit_application()
 
-def make_rdkit_pipeline(desc_list):
+	def descriptor_pipeline(self, name):
+		return make_rdkit_pipeline(names = [name], n_jobs = self.n_jobs())
+
+def make_rdkit_pipeline(names = None, n_jobs = 1):
 	return RDKitPipeline([
 		("parser", SmilesToMolTransformer()),
-		("descriptorizer", MolecularDescriptorTransformer(desc_list = desc_list))
+		("descriptorizer", MolecularDescriptorTransformer(desc_list = names, n_jobs = n_jobs))
 	])
 
 def rdkit_application():

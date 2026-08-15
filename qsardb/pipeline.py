@@ -28,6 +28,19 @@ class DescriptorPipeline(Pipeline):
 	def application_name(self):
 		return None
 
+	def descriptor_pipeline(self, name):
+		return None
+
+	def n_jobs(self):
+		return getattr(self.steps[-1][1], "n_jobs", 1)
+
+	def descriptor_pipelines_out(self):
+		names = self.get_feature_names_out()
+		derived = {name : self.descriptor_pipeline(name) for name in names}
+		if any(pipeline is not None for pipeline in derived.values()):
+			return derived
+		return _descriptor_pipelines_out(self.steps[-1][1], names)
+
 
 	def get_feature_names_out(self, input_features = None):
 		return numpy.asarray([str(name) for name in super().get_feature_names_out(input_features)], dtype = object)
@@ -90,8 +103,12 @@ class QDBPipeline(Pipeline):
 
 		descriptors = self._merge("descriptors")
 		applications = self._descriptor_steps().applications_out()
+		derived = self._descriptor_steps().descriptor_pipelines_out()
 		for id in descriptors.columns:
-			qdb.add("descriptors", {"Id" : id, "Name" : id, "Application" : applications.get(id)}, {"values" : format_values(id, descriptors[id])})
+			cargos = {"values" : format_values(id, descriptors[id])}
+			if derived.get(id) is not None:
+				cargos["pkl"] = pickle.dumps(derived[id], protocol = _PICKLE_PROTOCOL)
+			qdb.add("descriptors", {"Id" : id, "Name" : id, "Application" : applications.get(id)}, cargos)
 
 		qdb.add("models", {"Id" : "1", "Name" : name, "PropertyId" : self.property_id}, {"pkl" : self._format_pickle(), "pmml" : self._format_pmml(descriptors.columns)})
 
@@ -223,6 +240,19 @@ def _capture_modules(estimator):
 def format_requirements(estimator):
 	distributions = _prune(_distributions(_capture_modules(estimator))) - {"qsardb", "pip", "setuptools"}
 	return "\n".join("%s==%s" % (distribution, importlib.metadata.version(distribution)) for distribution in sorted(distributions)) + "\n"
+
+def _descriptor_pipelines_out(step, names):
+	if isinstance(step, DescriptorPipeline):
+		return step.descriptor_pipelines_out()
+	if isinstance(step, ColumnTransformer):
+		derived = {}
+		for name, transformer, columns in step.transformers_:
+			if transformer not in ("drop", "passthrough"):
+				derived.update(_descriptor_pipelines_out(transformer, transformer.get_feature_names_out()))
+		return derived
+	if isinstance(step, Pipeline):
+		return _descriptor_pipelines_out(step.steps[-1][1], names)
+	return {name : None for name in names}
 
 def _applications_out(step):
 	if isinstance(step, DescriptorPipeline):
