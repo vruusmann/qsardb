@@ -164,7 +164,10 @@ class QDBPipeline(Pipeline):
 		feature_names = getattr(schema_step, "feature_names_in_", None)
 
 		if feature_names is not None:
-			schema_step.feature_names_in_ = numpy.asarray(active_fields)
+			try:
+				schema_step.feature_names_in_ = numpy.asarray(active_fields)
+			except AttributeError:
+				feature_names = None
 		try:
 			pmml_pipeline = make_pmml_pipeline(estimator_steps, active_fields = active_fields, target_fields = ["properties/" + self.property_id])
 			directory = tempfile.mkdtemp()
