@@ -5,6 +5,38 @@ Exported archives are executable: the model and the descriptors that feed it are
 
 Descriptor calculation is supported out of the box for RDKit and Mordred, and the same three-part pattern extends the package to any other Python descriptor library.
 
+## Contents
+
+- [Install](#install)
+- [Archive layout](#archive-layout)
+	- [Containers and cargos](#containers-and-cargos)
+	- [Value cargos](#value-cargos)
+	- [Classical QDB archives](#classical-qdb-archives)
+	- [Python-enriched QDB archives](#python-enriched-qdb-archives)
+		- [Executable pickles](#executable-pickles)
+		- [requirements.txt](#requirementstxt)
+	- [Normalisation](#normalisation)
+- [Python API](#python-api)
+	- [QDB](#qdb)
+		- [Loading and storing](#loading-and-storing)
+		- [select and merge](#select-and-merge)
+		- [update](#update)
+	- [QDBPipeline](#qdbpipeline)
+		- [Structure](#structure)
+		- [Fitting and prediction sets](#fitting-and-prediction-sets)
+		- [Conversion](#conversion)
+	- [DescriptorPipeline](#descriptorpipeline)
+		- [Built-in engines](#built-in-engines)
+		- [Extending with another library](#extending-with-another-library)
+- [Usage](#usage)
+	- [A spot experiment](#a-spot-experiment)
+	- [A branching experiment](#a-branching-experiment)
+	- [Working across sessions](#working-across-sessions)
+	- [Distilling a large descriptor set](#distilling-a-large-descriptor-set)
+	- [Executing an archive](#executing-an-archive)
+- [Examples](#examples)
+- [Not yet](#not-yet)
+
 ## Install
 
 ```
