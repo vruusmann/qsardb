@@ -8,8 +8,10 @@ Descriptor calculation is supported out of the box for RDKit and Mordred, and th
 ## Contents
 
 - [Install](#install)
+- [Quick start](#quick-start)
 - [QsarDB archives](#qsardb-archives)
 	- [Classical archives](#classical-archives)
+		- [Layout](#layout)
 		- [Containers and cargos](#containers-and-cargos)
 		- [Value cargos](#value-cargos)
 	- [Python-enhanced archives](#python-enhanced-archives)
@@ -22,7 +24,7 @@ Descriptor calculation is supported out of the box for RDKit and Mordred, and th
 		- [`update`](#update)
 		- [Normalisation](#normalisation)
 	- [`QDBPipeline`](#qdbpipeline)
-		- [Structure](#structure)
+		- [Composition](#composition)
 		- [Fitting and prediction sets](#fitting-and-prediction-sets)
 		- [Interconversion with `QDB`](#interconversion-with-qdb)
 	- [`DescriptorPipeline`](#descriptorpipeline)
@@ -48,6 +50,88 @@ pip install -e .[rdkit,mordred]
 The base install reads and writes archives.
 The `rdkit` and `mordred` extras add the corresponding descriptor pipelines.
 
+## Quick start
+
+A dataset of structures and measured values, four descriptors and a linear model:
+
+```python
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+from sklearn.model_selection import train_test_split
+
+import pandas
+
+from qsardb import QDBPipeline
+from qsardb.rdkit import make_rdkit_pipeline
+
+dataset = pandas.read_csv("esol.csv", index_col = "Id")
+
+X = dataset[["SMILES", "Name"]]
+y = dataset["logS"]
+
+X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size = 0.2, random_state = 13)
+
+pipeline = QDBPipeline([
+	("descriptors", make_rdkit_pipeline(["MolLogP", "MolWt", "NumRotatableBonds", "NumAromaticRings"])),
+	("model", LinearRegression())
+])
+pipeline.fit(X_train, y_train)
+validation = pipeline.validate(X_valid, y_valid)
+
+print("validation R2 = %.3f" % r2_score(y_valid, validation))
+
+(pipeline
+	.to_qdb(model_id = "1", name = "logS from four RDKit descriptors")
+	.store("logS.qdb.zip"))
+```
+
+```
+validation R2 = 0.804
+```
+
+The index of the dataset becomes the compound identifiers, the first column of `X` holds the structures, and a column named `Name` becomes the compound names.
+Nothing else needs saying: the descriptors that the model consumes, the values they took for every compound, the predictions for both sets and the software that computed them all follow from the pipeline itself.
+
+What comes out is not a pickle of a fitted object but a QsarDB archive:
+
+```
+logS.qdb.zip
+	archive.xml
+	requirements.txt
+	compounds/compounds.xml
+	compounds/1/daylight-smiles
+	properties/properties.xml
+	properties/logS/values
+	descriptors/descriptors.xml
+	descriptors/MolLogP/values
+	descriptors/MolLogP/pkl
+	models/models.xml
+	models/1/pmml
+	models/1/pkl
+	predictions/predictions.xml
+	predictions/1-training/values
+	predictions/1-validation/values
+```
+
+The values are there to be checked, the PMML is there for anyone without Python, and the pickles are there so the archive can be run rather than only read.
+Someone handed that file needs no code of yours:
+
+```python
+from qsardb import QDB, QDBPipeline
+
+import pandas
+
+pipeline = QDBPipeline.from_qdb(QDB.load("logS.qdb.zip"))
+
+print(pipeline.predict(pandas.DataFrame({"SMILES" : ["CCO", "c1ccc2ccccc2c1"]}, index = ["ethanol", "naphthalene"])))
+```
+
+```
+ethanol       -0.111868
+naphthalene   -3.147085
+Name: logS, dtype: float32
+```
+
 ## QsarDB archives
 
 ### Classical archives
@@ -58,6 +142,25 @@ Everything needed to check the model is present, and a PMML evaluator can rerun 
 
 What such an archive cannot do is get from a structure to those descriptor values.
 The `Application` attribute records that a descriptor came from, say, CDK 1.4.9, but not how to invoke it.
+
+#### Layout
+
+An archive is a directory tree, usually distributed as a ZIP file.
+Each of the five containers is a directory holding a registry file and one subdirectory per entry, and each subdirectory holds that entry's cargos:
+
+```
+archive.xml
+compounds/compounds.xml
+compounds/{id}/daylight-smiles
+properties/properties.xml
+properties/{id}/values
+descriptors/descriptors.xml
+descriptors/{id}/values
+models/models.xml
+models/{id}/pmml
+predictions/predictions.xml
+predictions/{id}/values
+```
 
 #### Containers and cargos
 
@@ -165,7 +268,7 @@ Reading and re-storing an archive normalises it: attributes are ordered as the s
 `qsardb.QDBPipeline` is a Scikit-Learn `Pipeline` that trains and applies exactly one model.
 The single-model restriction is not ours: a Scikit-Learn pipeline ends in one estimator.
 
-#### Structure
+#### Composition
 
 The first step must be a `DescriptorPipeline`, which turns structures into named descriptor columns.
 Everything after it is the model.
