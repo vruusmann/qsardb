@@ -86,14 +86,11 @@ class QDBPipeline(Pipeline):
 		return Series(self._estimator_steps().predict(descriptors), index = X.index, name = self.property_id)
 
 	@classmethod
-	def from_qdb(cls, qdb, model_id = None):
+	def from_qdb(cls, qdb):
 		models = {model["Id"] : model for model in qdb.containers["models"]}
-		if model_id is None:
-			if len(models) != 1:
-				raise ValueError("The archive holds %d models, one of %s must be chosen" % (len(models), sorted(models)))
-			model_id = list(models)[0]
-		if model_id not in models:
-			raise ValueError("The archive holds no model %s, but %s" % (model_id, sorted(models)))
+		if len(models) != 1:
+			raise ValueError("The archive holds %d models, select one of %s first" % (len(models), sorted(models)))
+		model_id = list(models)[0]
 
 		cargos = qdb.cargos["models"][model_id]
 		if "pkl" not in cargos:

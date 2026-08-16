@@ -1,6 +1,7 @@
 from xml.etree import ElementTree
 
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -91,6 +92,42 @@ class QDB(object):
 		self.containers[type].append(attributes)
 		self.cargos[type][attributes["Id"]] = cargos
 
+	def select(self, model_id, prune = True):
+		models = {container["Id"] : container for container in self.containers["models"]}
+		if model_id not in models:
+			raise ValueError("The archive holds no model %s, but %s" % (model_id, sorted(models)))
+
+		selected = QDB(self.name, self.description)
+		selected.files = dict(self.files)
+		selected.add("models", models[model_id], self.cargos["models"][model_id])
+
+		compounds = set()
+		for container in self.containers["predictions"]:
+			if container.get("ModelId") != model_id:
+				continue
+			selected.add("predictions", container, self.cargos["predictions"][container["Id"]])
+			compounds.update(parse_values(self.cargos["predictions"][container["Id"]]["values"]))
+
+		if not prune:
+			compounds = {container["Id"] for container in self.containers["compounds"]}
+		descriptors = _pmml_descriptors(self.cargos["models"][model_id]) if prune else None
+
+		for container in self.containers["compounds"]:
+			if container["Id"] in compounds:
+				selected.add("compounds", container, self.cargos["compounds"][container["Id"]])
+
+		for container in self.containers["properties"]:
+			if prune and container["Id"] != models[model_id].get("PropertyId"):
+				continue
+			selected.add("properties", container, _select_cargos(self.cargos["properties"][container["Id"]], compounds))
+
+		for container in self.containers["descriptors"]:
+			if descriptors is not None and container["Id"] not in descriptors:
+				continue
+			selected.add("descriptors", container, _select_cargos(self.cargos["descriptors"][container["Id"]], compounds))
+
+		return selected
+
 	def store(self, path):
 		if path.endswith(_ZIP_SUFFIXES):
 			directory = tempfile.mkdtemp()
@@ -161,6 +198,21 @@ def format_value(value):
 	if value is None or value != value:
 		return _NA
 	return str(value)
+
+def _pmml_descriptors(cargos):
+	if "pmml" not in cargos:
+		return None
+	return {name[len("descriptors/"):] for name in re.findall(r"<DataField name=\"([^\"]+)\"", cargos["pmml"]) if name.startswith("descriptors/")}
+
+def _select_cargos(cargos, compounds):
+	selected = {}
+	for cargo_id, payload in cargos.items():
+		if cargo_id == "values":
+			lines = payload.replace("\r", "").split("\n")
+			selected[cargo_id] = "\n".join([lines[0]] + [line for line in lines[1:] if line.strip() and line.split("\t")[0] in compounds])
+		else:
+			selected[cargo_id] = payload
+	return selected
 
 def parse_values(payload):
 	rows = {}
