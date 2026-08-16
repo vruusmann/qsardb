@@ -128,7 +128,7 @@ class QDBPipeline(Pipeline):
 		if name is None:
 			name = self.property_id
 
-		qdb = QDB(name, description)
+		qdb = QDB()
 		qdb.files["requirements.txt"] = format_requirements(self)
 
 		self._check_collisions()
@@ -151,7 +151,7 @@ class QDBPipeline(Pipeline):
 				cargos["pkl"] = pickle.dumps(narrowed, protocol = _PICKLE_PROTOCOL)
 			qdb.add("descriptors", {"Id" : id, "Name" : id, "Application" : applications.get(id)}, cargos)
 
-		qdb.add("models", {"Id" : model_id, "Name" : name, "PropertyId" : self.property_id}, {"pkl" : self._format_pickle(), "pmml" : self._format_pmml(descriptors.columns)})
+		qdb.add("models", {"Id" : model_id, "Name" : name, "Description" : description, "PropertyId" : self.property_id}, {"pkl" : self._format_pickle(), "pmml" : self._format_pmml(descriptors.columns)})
 
 		for type, dataset in self.datasets.items():
 			prediction_id = "%s-%s" % (model_id, type)

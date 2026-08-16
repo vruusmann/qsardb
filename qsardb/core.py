@@ -128,8 +128,15 @@ class QDB(object):
 
 		return selected
 
-	def merge(self, other, name = None, description = None):
-		merged = QDB(name if name is not None else self.name, description if description is not None else self.description)
+	def update(self, name = None, description = None):
+		if name is not None:
+			self.name = name
+		if description is not None:
+			self.description = description
+		return self
+
+	def merge(self, other):
+		merged = QDB(self.name, self.description)
 		merged.files = _merge_files(self.files, other.files)
 
 		for type in _CONTAINERS:
