@@ -96,21 +96,34 @@ What comes out is not a pickle of a fitted object but a QsarDB archive:
 
 ```
 logS.qdb.zip
-	archive.xml
-	requirements.txt
-	compounds/compounds.xml
-	compounds/1/daylight-smiles
-	properties/properties.xml
-	properties/logS/values
-	descriptors/descriptors.xml
-	descriptors/MolLogP/values
-	descriptors/MolLogP/pkl
-	models/models.xml
-	models/1/pmml
-	models/1/pkl
-	predictions/predictions.xml
-	predictions/1-training/values
-	predictions/1-validation/values
+├── archive.xml
+├── requirements.txt
+├── compounds
+│   ├── compounds.xml
+│   ├── 1
+│   │   └── daylight-smiles
+│   └── ...
+├── properties
+│   ├── properties.xml
+│   └── logS
+│       └── values
+├── descriptors
+│   ├── descriptors.xml
+│   ├── MolLogP
+│   │   ├── values
+│   │   └── pkl
+│   └── ...
+├── models
+│   ├── models.xml
+│   └── 1
+│       ├── pmml
+│       └── pkl
+└── predictions
+    ├── predictions.xml
+    ├── 1-training
+    │   └── values
+    └── 1-validation
+        └── values
 ```
 
 The values are there to be checked, the PMML is there for anyone without Python, and the pickles are there so the archive can be run rather than only read.
@@ -149,17 +162,28 @@ An archive is a directory tree, usually distributed as a ZIP file.
 Each of the five containers is a directory holding a registry file and one subdirectory per entry, and each subdirectory holds that entry's cargos:
 
 ```
-archive.xml
-compounds/compounds.xml
-compounds/{id}/daylight-smiles
-properties/properties.xml
-properties/{id}/values
-descriptors/descriptors.xml
-descriptors/{id}/values
-models/models.xml
-models/{id}/pmml
-predictions/predictions.xml
-predictions/{id}/values
+{archive}
+├── archive.xml
+├── compounds
+│   ├── compounds.xml
+│   └── {id}
+│       └── daylight-smiles
+├── properties
+│   ├── properties.xml
+│   └── {id}
+│       └── values
+├── descriptors
+│   ├── descriptors.xml
+│   └── {id}
+│       └── values
+├── models
+│   ├── models.xml
+│   └── {id}
+│       └── pmml
+└── predictions
+    ├── predictions.xml
+    └── {id}
+        └── values
 ```
 
 #### Containers and cargos
@@ -185,8 +209,37 @@ Field names in the PMML are namespaced as `descriptors/{id}` and `properties/{id
 
 ### Python-enhanced archives
 
-An archive written by this package is a classical archive plus two additions.
-It remains a valid classical archive, so a reader that knows nothing about the additions still finds the PMML and the values where it expects them.
+An archive written by this package is a classical archive plus the Python-specific files marked below:
+
+```
+{archive}
+├── archive.xml
+├── requirements.txt                        <- Python-specific
+├── compounds
+│   ├── compounds.xml
+│   └── {id}
+│       └── daylight-smiles
+├── properties
+│   ├── properties.xml
+│   └── {id}
+│       └── values
+├── descriptors
+│   ├── descriptors.xml
+│   └── {id}
+│       ├── values
+│       └── pkl                             <- Python-specific
+├── models
+│   ├── models.xml
+│   └── {id}
+│       ├── pmml
+│       └── pkl                             <- Python-specific
+└── predictions
+    ├── predictions.xml
+    └── {id}
+        └── values
+```
+
+Everything else is where a classical archive puts it, so a reader that knows nothing about the additions still finds the PMML and the values where it expects them.
 
 #### Executable pickles
 
