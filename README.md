@@ -82,7 +82,7 @@ A descriptor whose application cannot be determined is written without one.
 
 A `DescriptorPipeline` can also be assembled by hand from any transformer that takes structures and returns named columns.
 
-## Narrowing
+## Distilling
 
 A model fitted on a large descriptor set typically uses a small part of it.
 `used_descriptors()` reports the descriptors the fitted model actually references, so the pipeline can be rebuilt around them and refitted:
@@ -93,7 +93,7 @@ used = pipeline.used_descriptors()
 ```
 
 Doing this before `to_qdb` keeps the archive to the descriptors that matter, and keeps the stored descriptor values aligned with what the model consumes.
-`examples/esol-joint.py` narrows 1618 descriptors to 24 this way.
+`examples/esol-joint.py` distills 1618 descriptors to 24 this way.
 
 ## Executing an archive
 
@@ -129,7 +129,7 @@ It is derived by loading the pickled pipeline in a subprocess and recording what
 
 `examples/esol.py` fits a linear model of aqueous solubility on RDKit descriptors, with a derived field computed from two of them, and exports an archive.
 
-`examples/esol-joint.py` combines RDKit and Mordred descriptors, fits a gradient boosted model, narrows the descriptor set to the ones the model uses, and reports which software each came from.
+`examples/esol-joint.py` combines RDKit and Mordred descriptors, fits a gradient boosted model, distills the descriptor set to the ones the model uses, and reports which software each came from.
 
 Both read `esol.csv` and write their archive alongside it, so run them from within `examples`, with the package installed.
 They need `xgboost` in addition to the package requirements.

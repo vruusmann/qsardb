@@ -35,11 +35,11 @@ class DescriptorPipeline(Pipeline):
 	def n_jobs(self):
 		return getattr(self.steps[-1][1], "n_jobs", 1)
 
-	def narrow(self, names):
-		narrowed = self.descriptor_pipeline(names)
-		if narrowed is not None:
-			return narrowed
-		return _narrow(self.steps[-1][1], names)
+	def distill(self, names):
+		distilled = self.descriptor_pipeline(names)
+		if distilled is not None:
+			return distilled
+		return _distill(self.steps[-1][1], names)
 
 
 	def get_feature_names_out(self, input_features = None):
@@ -148,9 +148,9 @@ class QDBPipeline(Pipeline):
 		applications = self._descriptor_steps().applications_out()
 		for id in descriptors.columns:
 			cargos = {"values" : format_values(id, descriptors[id])}
-			narrowed = self._descriptor_steps().narrow([id])
-			if narrowed is not None:
-				cargos["pkl"] = pickle.dumps(narrowed, protocol = _PICKLE_PROTOCOL)
+			distilled = self._descriptor_steps().distill([id])
+			if distilled is not None:
+				cargos["pkl"] = pickle.dumps(distilled, protocol = _PICKLE_PROTOCOL)
 			qdb.add("descriptors", {"Id" : id, "Name" : id, "Application" : applications.get(id)}, cargos)
 
 		qdb.add("models", {"Id" : model_id, "Name" : name, "Description" : description, "PropertyId" : self.property_id}, {"pkl" : self._format_pickle(), "pmml" : self._format_pmml(descriptors.columns)})
@@ -250,12 +250,12 @@ class QDBPipeline(Pipeline):
 		return _used_descriptors(self._format_pmml(self.training()["descriptors"].columns))
 
 	def _format_pickle(self):
-		narrowed = self._descriptor_steps().narrow(list(self.training()["descriptors"].columns))
-		if narrowed is None:
-			narrowed = self._descriptor_steps()
+		distilled = self._descriptor_steps().distill(list(self.training()["descriptors"].columns))
+		if distilled is None:
+			distilled = self._descriptor_steps()
 		else:
-			narrowed.fit(self.training()["structures"].to_frame())
-		return pickle.dumps(Pipeline([("descriptors", narrowed)] + list(self._estimator_steps().steps)), protocol = _PICKLE_PROTOCOL)
+			distilled.fit(self.training()["structures"].to_frame())
+		return pickle.dumps(Pipeline([("descriptors", distilled)] + list(self._estimator_steps().steps)), protocol = _PICKLE_PROTOCOL)
 
 	def _format_pmml(self, descriptor_ids):
 		active_fields = ["descriptors/" + id for id in descriptor_ids]
@@ -328,9 +328,9 @@ def _restore_values(payload):
 def _used_descriptors(pmml):
 	return {name[len("descriptors/"):] for name in re.findall(r"<DataField name=\"([^\"]+)\"", pmml) if name.startswith("descriptors/")}
 
-def _narrow(step, names):
+def _distill(step, names):
 	if isinstance(step, DescriptorPipeline):
-		return step.narrow(names)
+		return step.distill(names)
 	if isinstance(step, ColumnTransformer):
 		branches = []
 		for branch, transformer, columns in step.transformers_:
@@ -338,15 +338,15 @@ def _narrow(step, names):
 				continue
 			selected = [name for name in names if name in set(transformer.get_feature_names_out())]
 			if selected:
-				narrowed = _narrow(transformer, selected)
-				if narrowed is None:
+				distilled = _distill(transformer, selected)
+				if distilled is None:
 					return None
-				branches.append((branch, narrowed, columns))
+				branches.append((branch, distilled, columns))
 		if not branches:
 			return None
 		return DescriptorPipeline([("descriptorizer", ColumnTransformer(branches, verbose_feature_names_out = False))])
 	if isinstance(step, Pipeline):
-		return _narrow(step.steps[-1][1], names)
+		return _distill(step.steps[-1][1], names)
 	return None
 
 def _applications_out(step):
