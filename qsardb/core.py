@@ -162,6 +162,14 @@ def format_value(value):
 		return _NA
 	return str(value)
 
+def parse_values(payload):
+	rows = {}
+	for line in payload.replace("\r", "").split("\n")[1:]:
+		if line.strip():
+			key, value = line.split("\t")
+			rows[key] = None if value == _NA else value
+	return rows
+
 def format_values(header, values):
 	lines = ["Compound Id\t" + header]
 	for compound_id, value in zip(values.index, values.to_numpy()):

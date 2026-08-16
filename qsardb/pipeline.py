@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 
-from qsardb.core import QDB, format_values
+from qsardb.core import QDB, format_values, parse_values
 
 _PICKLE_PROTOCOL = 4
 
@@ -62,6 +62,8 @@ class QDBPipeline(Pipeline):
 		self.datasets = {}
 
 	def fit(self, X, y = None, **fit_params):
+		if self.datasets:
+			raise ValueError("The pipeline has already been fitted, recording %s" % sorted(self.datasets))
 		self._check(X, y)
 		descriptors = self._descriptor_steps().fit_transform(X[[X.columns[0]]])
 		descriptors.index = X.index
@@ -99,7 +101,31 @@ class QDBPipeline(Pipeline):
 
 		pipeline = cls(pickle.loads(cargos["pkl"]).steps)
 		pipeline.property_id = models[model_id]["PropertyId"]
+		pipeline.datasets = pipeline._restore(qdb, model_id)
 		return pipeline
+
+	def _restore(self, qdb, model_id):
+		structures = _restore_series(qdb.cargos["compounds"], "daylight-smiles")
+		names = Series({container["Id"] : container.get("Name") for container in qdb.containers["compounds"]}, name = "Name")
+		inchis = Series({container["Id"] : container.get("InChI") for container in qdb.containers["compounds"]}, name = "InChI")
+		property = _restore_values(qdb.cargos["properties"][self.property_id]["values"])
+		descriptors = DataFrame({container["Id"] : _restore_values(qdb.cargos["descriptors"][container["Id"]]["values"]) for container in qdb.containers["descriptors"]})
+
+		datasets = {}
+		for container in qdb.containers["predictions"]:
+			if container["ModelId"] != model_id:
+				continue
+			predictions = _restore_values(qdb.cargos["predictions"][container["Id"]]["values"])
+			index = predictions.index
+			datasets[container["Type"]] = {
+				"structures" : structures[index],
+				"names" : names[index] if names.notna().any() else None,
+				"inchis" : inchis[index],
+				"property" : property[index] if container["Type"] != "testing" else None,
+				"descriptors" : descriptors.loc[index],
+				"predictions" : predictions
+			}
+		return datasets
 
 	def to_qdb(self, name = None, description = None):
 		if name is None:
@@ -145,6 +171,12 @@ class QDBPipeline(Pipeline):
 				raise ValueError("X and y must share the same compound identifiers")
 
 	def _record(self, type, X, y, descriptors):
+		index = X.index.astype(str)
+		X = X.set_axis(index)
+		descriptors = descriptors.set_axis(index)
+		if y is not None:
+			y = y.set_axis(index)
+
 		structures = X[X.columns[0]]
 		inchis = format_inchis(structures)
 		conflicting = sorted(inchis.groupby(level = 0).nunique().loc[lambda counts: counts > 1].index)
@@ -266,6 +298,18 @@ def _capture_modules(estimator):
 def format_requirements(estimator):
 	distributions = _prune(_distributions(_capture_modules(estimator))) - {"qsardb", "pip", "setuptools"}
 	return "\n".join("%s==%s" % (distribution, importlib.metadata.version(distribution)) for distribution in sorted(distributions)) + "\n"
+
+def _restore_series(cargos, cargo_id):
+	return Series({id : cargos[id][cargo_id].strip() for id in cargos})
+
+def _restore_values(payload):
+	values = {}
+	for id, value in parse_values(payload).items():
+		try:
+			values[id] = float(value) if value is not None else float("nan")
+		except ValueError:
+			values[id] = value
+	return Series(values)
 
 def _used_descriptors(pmml):
 	return {name[len("descriptors/"):] for name in re.findall(r"<DataField name=\"([^\"]+)\"", pmml) if name.startswith("descriptors/")}
