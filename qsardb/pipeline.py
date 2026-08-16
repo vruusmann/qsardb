@@ -124,7 +124,7 @@ class QDBPipeline(Pipeline):
 			}
 		return datasets
 
-	def to_qdb(self, name = None, description = None):
+	def to_qdb(self, model_id = "1", name = None, description = None):
 		if name is None:
 			name = self.property_id
 
@@ -151,10 +151,11 @@ class QDBPipeline(Pipeline):
 				cargos["pkl"] = pickle.dumps(narrowed, protocol = _PICKLE_PROTOCOL)
 			qdb.add("descriptors", {"Id" : id, "Name" : id, "Application" : applications.get(id)}, cargos)
 
-		qdb.add("models", {"Id" : "1", "Name" : name, "PropertyId" : self.property_id}, {"pkl" : self._format_pickle(), "pmml" : self._format_pmml(descriptors.columns)})
+		qdb.add("models", {"Id" : model_id, "Name" : name, "PropertyId" : self.property_id}, {"pkl" : self._format_pickle(), "pmml" : self._format_pmml(descriptors.columns)})
 
-		for position, (type, dataset) in enumerate(self.datasets.items(), start = 1):
-			qdb.add("predictions", {"Id" : str(position), "Name" : type.capitalize() + " set", "ModelId" : "1", "Type" : type, "Application" : sklearn_application()}, {"values" : format_values(type.capitalize() + " set", dataset["predictions"])})
+		for type, dataset in self.datasets.items():
+			prediction_id = "%s-%s" % (model_id, type)
+			qdb.add("predictions", {"Id" : prediction_id, "Name" : "%s, %s set" % (name, type), "ModelId" : model_id, "Type" : type, "Application" : sklearn_application()}, {"values" : format_values(prediction_id, dataset["predictions"])})
 
 		return qdb
 

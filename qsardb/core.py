@@ -128,6 +128,30 @@ class QDB(object):
 
 		return selected
 
+	def merge(self, other, name = None, description = None):
+		merged = QDB(name if name is not None else self.name, description if description is not None else self.description)
+		merged.files = _merge_files(self.files, other.files)
+
+		for type in _CONTAINERS:
+			containers = {}
+			cargos = {}
+			for qdb in [self, other]:
+				for container in qdb.containers[type]:
+					id = container["Id"]
+					if id not in containers:
+						containers[id] = container
+						cargos[id] = qdb.cargos[type][id]
+						continue
+					if type in ("models", "predictions"):
+						raise ValueError("Both archives hold the %s container %s" % (type, id))
+					if _attributes(containers[id]) != _attributes(container):
+						raise ValueError("The %s container %s differs between the archives" % (type, id))
+					cargos[id] = _merge_cargos(cargos[id], qdb.cargos[type][id], type, id)
+			for id, container in containers.items():
+				merged.add(type, container, cargos[id])
+
+		return merged
+
 	def store(self, path):
 		if path.endswith(_ZIP_SUFFIXES):
 			directory = tempfile.mkdtemp()
@@ -198,6 +222,41 @@ def format_value(value):
 	if value is None or value != value:
 		return _NA
 	return str(value)
+
+def _attributes(container):
+	return {key : value for key, value in container.items() if key != "Cargos"}
+
+def _merge_files(left, right):
+	merged = dict(left)
+	for name, payload in right.items():
+		if name not in merged:
+			merged[name] = payload
+		elif merged[name] != payload:
+			if isinstance(payload, bytes) or isinstance(merged[name], bytes):
+				raise ValueError("The archive file %s differs between the archives" % name)
+			merged[name] = "\n".join(sorted(set(merged[name].split()) | set(payload.split()))) + "\n"
+	return merged
+
+def _merge_cargos(left, right, type, id):
+	merged = dict(left)
+	for cargo_id, payload in right.items():
+		if cargo_id not in merged:
+			merged[cargo_id] = payload
+		elif cargo_id == "values":
+			merged[cargo_id] = _merge_values(merged[cargo_id], payload, type, id)
+		elif merged[cargo_id] != payload:
+			raise ValueError("The %s cargo of the %s container %s differs between the archives" % (cargo_id, type, id))
+	return merged
+
+def _merge_values(left, right, type, id):
+	header = left.replace("\r", "").split("\n")[0]
+	values = parse_values(left)
+	for compound_id, value in parse_values(right).items():
+		if compound_id in values and values[compound_id] != value:
+			raise ValueError("The %s container %s holds conflicting values for the compound %s" % (type, id, compound_id))
+		values[compound_id] = value
+	lines = [header] + ["%s\t%s" % (compound_id, _NA if value is None else value) for compound_id, value in values.items()]
+	return "\n".join(lines)
 
 def _pmml_descriptors(cargos):
 	if "pmml" not in cargos:
