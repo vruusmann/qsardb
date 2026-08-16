@@ -12,32 +12,35 @@ pip install -e .[rdkit,mordred]
 The base install reads and writes archives.
 The `rdkit` and `mordred` extras add the corresponding descriptor pipelines.
 
-## Archives
+## The two classes
 
-`QDB` reads and writes the archive itself, either as a directory or as a ZIP file.
-A path ending in `.zip`, `.qdb` or `.qdb.zip` selects the latter.
+`QDB` is the archive.
+It holds compounds, properties, descriptors, models and predictions, it reads and writes files, and it can hold any number of models.
+
+`QDBPipeline` is a Scikit-Learn `Pipeline` that trains and applies exactly one model.
+The single-model restriction is not ours: a Scikit-Learn pipeline ends in one estimator.
+
+The two convert into each other, and only `QDB` touches the filesystem:
 
 ```python
-from qsardb import QDB
+QDB.load(path)                 # file  -> QDB
+qdb.store(path)                # QDB   -> file
 
-qdb = QDB.load("ONSMP010.qdb.zip")
-qdb.store("ONSMP010")
+QDBPipeline.from_qdb(qdb)      # QDB   -> QDBPipeline, requires a single-model archive
+pipeline.to_qdb(model_id)      # QDBPipeline -> single-model QDB
 ```
 
-Containers are dictionaries of attributes and cargos are payload strings, or bytes for binary cargos such as `pkl` and `rds`.
-Files at the archive root, such as `requirements.txt`, are available as `QDB.files`.
-
-Values are written at the full precision of their own dtype, so a float32 descriptor writes seven significant digits and a float64 prediction writes seventeen.
-A missing value is written as `N/A`, matching the reference implementation, which treats both null and NaN that way.
-
-Reading and re-storing an archive normalises it: attributes are ordered as the schema declares, empty elements are dropped, `Cargos` is recomputed from the cargo files actually present, and anything outside the five containers and the root files is discarded.
-
-## Pipelines
-
-`QDBPipeline` is a `Pipeline` whose first step must be a `DescriptorPipeline`.
-That step turns structures into named descriptor columns; everything after it is the model.
+So writing an archive is two steps, and the second one is where the file name is decided:
 
 ```python
+pipeline.to_qdb(model_id = "1", name = "logS from RDKit descriptors").store("model.qdb.zip")
+```
+
+## Training a model
+
+```python
+from sklearn.linear_model import LinearRegression
+
 from qsardb import QDBPipeline
 from qsardb.rdkit import make_rdkit_pipeline
 
@@ -45,20 +48,101 @@ pipeline = QDBPipeline([
 	("descriptors", make_rdkit_pipeline(["MolLogP", "MolWt", "TPSA"])),
 	("model", LinearRegression())
 ])
-pipeline.fit(X, y)
+pipeline.fit(X_train, y_train)
 pipeline.validate(X_valid, y_valid)
-pipeline.to_qdb().store("model.qdb.zip")
 ```
+
+The first step must be a `DescriptorPipeline`, which turns structures into named descriptor columns.
+Everything after it is the model.
 
 `X` is a `DataFrame` whose first column holds structures; a column named `Name` is picked up as the compound name.
 `y` is a named `Series` sharing the same index, and those index values become compound identifiers.
-`fit`, `validate` and `test` record the three `Prediction` types.
+
+`fit` may be called once.
+`validate` and `test` may be called any number of times, and each call appends a prediction container rather than replacing one:
+
+```python
+pipeline.validate(X_tight, y_tight, prediction_id = "tight")
+pipeline.validate(X_loose, y_loose, prediction_id = "loose")
+pipeline.test(X_unknown)
+```
+
+Prediction identifiers are the model identifier and the set name joined by a hyphen, so the sets above become `1-tight`, `1-loose` and `1-testing`.
+Naming them keeps them distinct when several models are merged into one archive.
+
 Compound identity is checked by InChI, so an identifier mapping to more than one structure is an error.
 
-`to_qdb` converts the fitted pipeline into a `QDB` holding the compounds with their structures and InChI, the property, the descriptor values, the model, and one prediction container per recorded set.
-File handling stays with `QDB`, so the archive is written by `store` and further containers can be added first.
-Descriptor values are stored as computed; anything derived from them - ratios, products, scaling - lives in the PMML as derived fields.
-Field names in the PMML are namespaced as `descriptors/{id}` and `properties/{id}`, while the pickles use the plain descriptor identifiers.
+## Single-model and multi-model archives
+
+`to_qdb` always produces a single-model archive, and `from_qdb` always requires one.
+Archives with several models are built and taken apart by two `QDB` methods:
+
+```python
+qdb = first.merge(second).merge(third)      # single-model -> multi-model
+qdb.select("second")                        # multi-model  -> single-model
+```
+
+`merge` is a union.
+Compounds, properties and descriptors are merged by identifier, row by row for their values; a conflicting value raises.
+Models and predictions raise on an identifier collision rather than being renumbered, which is why `to_qdb` takes the model identifier.
+The archive name and description are taken from the left operand and can be replaced afterwards:
+
+```python
+qdb.update(name = "Three nested hypotheses", description = "Each branch was fitted in isolation.")
+```
+
+`select` returns one model as a standalone archive.
+By default it prunes everything the model does not reference: the predictions of other models, the compounds those predictions covered, the other properties, and the descriptors absent from this model's PMML.
+Pass `prune = False` to keep the archive whole.
+
+The two are inverses, so an archive can be taken apart and put back together without loss:
+
+```python
+qdb.select("a").merge(qdb.select("b"))
+```
+
+## A multi-stage experiment
+
+A QSAR study is usually several hypotheses tried against the same data.
+Each hypothesis is a `QDBPipeline` of its own, and the archive is what collects them:
+
+```python
+BRANCHES = [
+	("partition", "Partitioning alone", ["MolLogP"], "Dissolution is transfer into water, so logP alone should carry the signal."),
+	("size", "Partitioning and size", ["MolLogP", "MolWt"], "Water must open a cavity around the solute, at a cost that scales with size."),
+	("packing", "With crystal packing", ["MolLogP", "MolWt", "NumAromaticRings", "NumHDonors"], "A solid must first leave its lattice, so stacking and hydrogen bonding should matter.")
+]
+
+archives = []
+for model_id, title, names, hypothesis in BRANCHES:
+	pipeline = QDBPipeline([("descriptors", make_rdkit_pipeline(names)), ("model", LinearRegression())])
+	pipeline.fit(X_train, y_train)
+	pipeline.validate(X_valid, y_valid)
+	verdict = r2_score(y_valid, pipeline.predict(X_valid))
+	archives.append(pipeline.to_qdb(model_id = model_id, name = title, description = "HYPOTHESIS: %s VERDICT: validation R2 %.3f." % (hypothesis, verdict)))
+
+deliverable = archives[0]
+for other in archives[1:]:
+	deliverable = deliverable.merge(other)
+deliverable.update(name = "Aqueous solubility, three nested hypotheses").store("logS.qdb.zip")
+```
+
+Every branch survives in the deliverable, the rejected ones included, and each can be taken out and used on its own.
+Store what cannot be recomputed: the hypothesis and the verdict belong in the model description, while scores, residuals and applicability measures are derivable from the property and prediction values whenever they are wanted.
+
+## Working across sessions
+
+An archive restores the full state of the pipeline that wrote it, so an experiment can be put down and picked up:
+
+```python
+pipeline = QDBPipeline.from_qdb(QDB.load("logS.qdb.zip").select("packing"))
+pipeline.validate(X_new, y_new, prediction_id = "external")
+pipeline.to_qdb(model_id = "packing").store("packing.qdb.zip")
+```
+
+The restored pipeline carries its training, validation and testing sets, so a further `validate` appends to what is already there rather than starting over.
+Nothing is recomputed on load; the stored state is taken as given.
+`fit` refuses to run on a restored pipeline, because a second fit would leave the archive describing predictions the model no longer makes.
 
 ## Descriptors
 
@@ -111,19 +195,29 @@ model[1:].predict(descriptor_values)        # from stored descriptor values
 `QDBPipeline.from_qdb` wraps that pickle back into a `QDBPipeline`, so a loaded archive predicts through the same interface it was trained with:
 
 ```python
-from qsardb import QDB, QDBPipeline
-
 pipeline = QDBPipeline.from_qdb(QDB.load("model.qdb.zip"))
 pipeline.predict(structures)
 ```
 
 The result is a `Series` indexed by the identifiers of the structures passed in and named after the property.
-An archive holding more than one model raises unless a `model_id` is given.
 
 Each descriptor container carries a `pkl` of its own, a pipeline that takes structures and returns that one descriptor.
 
 `requirements.txt` at the archive root pins the packages needed to unpickle these and call them.
 It is derived by loading the pickled pipeline in a subprocess and recording what gets imported, then dropping anything already implied by another requirement.
+
+## Archive contents
+
+Containers are dictionaries of attributes and cargos are payload strings, or bytes for binary cargos such as `pkl` and `rds`.
+Files at the archive root, such as `requirements.txt`, are available as `QDB.files`.
+
+Values are written at the full precision of their own dtype, so a float32 descriptor writes seven significant digits and a float64 prediction writes seventeen.
+A missing value is written as `N/A`, matching the reference implementation, which treats both null and NaN that way.
+
+Descriptor values are stored as computed; anything derived from them - ratios, products, scaling - lives in the PMML as derived fields.
+Field names in the PMML are namespaced as `descriptors/{id}` and `properties/{id}`, while the pickles use the plain descriptor identifiers.
+
+Reading and re-storing an archive normalises it: attributes are ordered as the schema declares, empty elements are dropped, `Cargos` is recomputed from the cargo files actually present, and anything outside the five containers and the root files is discarded.
 
 ## Examples
 
