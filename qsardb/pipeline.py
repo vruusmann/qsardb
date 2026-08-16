@@ -59,27 +59,27 @@ class QDBPipeline(Pipeline):
 
 	def __init__(self, steps, memory = None, verbose = False):
 		super().__init__(steps, memory = memory, verbose = verbose)
-		self.datasets = {}
+		self.datasets = []
 
 	def fit(self, X, y = None, **fit_params):
 		if self.datasets:
-			raise ValueError("The pipeline has already been fitted, recording %s" % sorted(self.datasets))
+			raise ValueError("The pipeline has already been fitted, recording %s" % [dataset["type"] for dataset in self.datasets])
 		self._check(X, y)
 		descriptors = self._descriptor_steps().fit_transform(X[[X.columns[0]]])
 		descriptors.index = X.index
 		self.property_id = y.name
-		self.datasets = {}
+		self.datasets = []
 		self._estimator_steps().fit(descriptors, y)
 		self._record("training", X, y, descriptors)
 		return self
 
-	def validate(self, X, y = None):
+	def validate(self, X, y = None, prediction_id = None):
 		self._check(X, y)
-		return self._record("validation", X, y, self._transform(X))
+		return self._record("validation", X, y, self._transform(X), prediction_id)
 
-	def test(self, X):
+	def test(self, X, prediction_id = None):
 		self._check(X, None)
-		return self._record("testing", X, None, self._transform(X))
+		return self._record("testing", X, None, self._transform(X), prediction_id)
 
 	def predict(self, X):
 		descriptors = self._transform(X)
@@ -108,20 +108,22 @@ class QDBPipeline(Pipeline):
 		property = _restore_values(qdb.cargos["properties"][self.property_id]["values"])
 		descriptors = DataFrame({container["Id"] : _restore_values(qdb.cargos["descriptors"][container["Id"]]["values"]) for container in qdb.containers["descriptors"]})
 
-		datasets = {}
+		datasets = []
 		for container in qdb.containers["predictions"]:
 			if container["ModelId"] != model_id:
 				continue
 			predictions = _restore_values(qdb.cargos["predictions"][container["Id"]]["values"])
 			index = predictions.index
-			datasets[container["Type"]] = {
+			datasets.append({
+				"type" : container["Type"],
+				"prediction_id" : container["Id"].split("-", 1)[-1],
 				"structures" : structures[index],
 				"names" : names[index] if names.notna().any() else None,
 				"inchis" : inchis[index],
 				"property" : property[index] if container["Type"] != "testing" else None,
 				"descriptors" : descriptors.loc[index],
 				"predictions" : predictions
-			}
+			})
 		return datasets
 
 	def to_qdb(self, model_id = "1", name = None, description = None):
@@ -135,7 +137,7 @@ class QDBPipeline(Pipeline):
 
 		structures = self._merge("structures")
 		inchis = self._merge("inchis")
-		names = self._merge("names") if any(dataset["names"] is not None for dataset in self.datasets.values()) else None
+		names = self._merge("names") if any(dataset["names"] is not None for dataset in self.datasets) else None
 		for id, smiles in structures.items():
 			qdb.add("compounds", {"Id" : str(id), "Name" : None if names is None else names.get(id), "InChI" : inchis[id]}, {"daylight-smiles" : smiles})
 
@@ -153,8 +155,14 @@ class QDBPipeline(Pipeline):
 
 		qdb.add("models", {"Id" : model_id, "Name" : name, "Description" : description, "PropertyId" : self.property_id}, {"pkl" : self._format_pickle(), "pmml" : self._format_pmml(descriptors.columns)})
 
-		for type, dataset in self.datasets.items():
-			prediction_id = "%s-%s" % (model_id, type)
+		positions = {}
+		for dataset in self.datasets:
+			type = dataset["type"]
+			positions[type] = positions.get(type, 0) + 1
+			suffix = dataset["prediction_id"]
+			if suffix is None:
+				suffix = type if positions[type] == 1 else "%s-%d" % (type, positions[type])
+			prediction_id = "%s-%s" % (model_id, suffix)
 			qdb.add("predictions", {"Id" : prediction_id, "Name" : "%s, %s set" % (name, type), "ModelId" : model_id, "Type" : type, "Application" : sklearn_application()}, {"values" : format_values(prediction_id, dataset["predictions"])})
 
 		return qdb
@@ -168,7 +176,7 @@ class QDBPipeline(Pipeline):
 			if not X.index.equals(y.index):
 				raise ValueError("X and y must share the same compound identifiers")
 
-	def _record(self, type, X, y, descriptors):
+	def _record(self, type, X, y, descriptors, prediction_id = None):
 		index = X.index.astype(str)
 		X = X.set_axis(index)
 		descriptors = descriptors.set_axis(index)
@@ -181,18 +189,20 @@ class QDBPipeline(Pipeline):
 		if conflicting:
 			raise ValueError("The %s set maps compound identifiers to more than one structure: %s" % (type, conflicting))
 		predictions = Series(self._estimator_steps().predict(descriptors), index = X.index, name = self.property_id)
-		self.datasets[type] = {
+		self.datasets.append({
+			"type" : type,
+			"prediction_id" : prediction_id,
 			"structures" : structures,
 			"inchis" : inchis,
 			"names" : self._select_names(X),
 			"property" : y,
 			"descriptors" : descriptors,
 			"predictions" : predictions
-		}
+		})
 		return predictions
 
 	def _check_collisions(self):
-		inchis = pandas.concat([dataset["inchis"] for dataset in self.datasets.values()])
+		inchis = pandas.concat([dataset["inchis"] for dataset in self.datasets])
 		conflicting = sorted(inchis.groupby(level = 0).nunique().loc[lambda counts: counts > 1].index)
 		if conflicting:
 			raise ValueError("The datasets map compound identifiers to more than one structure: %s" % conflicting)
@@ -225,20 +235,26 @@ class QDBPipeline(Pipeline):
 		if not isinstance(self.steps[0][1], DescriptorPipeline):
 			raise ValueError("The first step must be a DescriptorPipeline")
 
+	def training(self):
+		for dataset in self.datasets:
+			if dataset["type"] == "training":
+				return dataset
+		raise ValueError("The pipeline holds no training set")
+
 	def _merge(self, key):
-		parts = [dataset[key] for dataset in self.datasets.values() if dataset[key] is not None]
+		parts = [dataset[key] for dataset in self.datasets if dataset[key] is not None]
 		merged = pandas.concat(parts)
 		return merged[~merged.index.duplicated(keep = "first")].sort_index()
 
 	def used_descriptors(self):
-		return _used_descriptors(self._format_pmml(self.datasets["training"]["descriptors"].columns))
+		return _used_descriptors(self._format_pmml(self.training()["descriptors"].columns))
 
 	def _format_pickle(self):
-		narrowed = self._descriptor_steps().narrow(list(self.datasets["training"]["descriptors"].columns))
+		narrowed = self._descriptor_steps().narrow(list(self.training()["descriptors"].columns))
 		if narrowed is None:
 			narrowed = self._descriptor_steps()
 		else:
-			narrowed.fit(self.datasets["training"]["structures"].to_frame())
+			narrowed.fit(self.training()["structures"].to_frame())
 		return pickle.dumps(Pipeline([("descriptors", narrowed)] + list(self._estimator_steps().steps)), protocol = _PICKLE_PROTOCOL)
 
 	def _format_pmml(self, descriptor_ids):

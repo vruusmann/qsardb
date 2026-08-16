@@ -87,6 +87,8 @@ class QDB(object):
 			return payload
 
 	def add(self, type, attributes, cargos):
+		if attributes["Id"] in self.cargos[type]:
+			raise ValueError("The archive already holds the %s container %s" % (type, attributes["Id"]))
 		attributes = dict(attributes)
 		attributes["Cargos"] = " ".join(cargos.keys())
 		self.containers[type].append(attributes)
