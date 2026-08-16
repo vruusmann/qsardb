@@ -162,28 +162,33 @@ An archive is a directory tree, usually distributed as a ZIP file.
 Each of the five containers is a directory holding a registry file and one subdirectory per entry, and each subdirectory holds that entry's cargos:
 
 ```
-{archive}
+${archive}
 ├── archive.xml
 ├── compounds
 │   ├── compounds.xml
-│   └── {id}
-│       └── daylight-smiles
+│   ├── ${compound-id}
+│   │   └── daylight-smiles
+│   └── ...
 ├── properties
 │   ├── properties.xml
-│   └── {id}
-│       └── values
+│   ├── ${property-id}
+│   │   └── values
+│   └── ...
 ├── descriptors
 │   ├── descriptors.xml
-│   └── {id}
-│       └── values
+│   ├── ${descriptor-id}
+│   │   └── values
+│   └── ...
 ├── models
 │   ├── models.xml
-│   └── {id}
-│       └── pmml
+│   ├── ${model-id}
+│   │   └── pmml
+│   └── ...
 └── predictions
     ├── predictions.xml
-    └── {id}
-        └── values
+    ├── ${prediction-id}
+    │   └── values
+    └── ...
 ```
 
 #### Containers and cargos
@@ -193,7 +198,7 @@ In Python a container is a dictionary of attributes and a cargo is its payload, 
 
 ```python
 qdb.containers["models"]
-qdb.cargos["models"]["1"]["pmml"]
+qdb.cargos["models"][model_id]["pmml"]
 qdb.files["requirements.txt"]
 ```
 
@@ -205,38 +210,43 @@ A missing value is written as `N/A`, matching the reference implementation, whic
 
 Descriptor values are stored as computed.
 Anything derived from them - ratios, products, scaling - lives in the PMML as derived fields rather than as a descriptor of its own.
-Field names in the PMML are namespaced as `descriptors/{id}` and `properties/{id}`, while the pickles use the plain descriptor identifiers.
+Field names in the PMML are namespaced as `descriptors/${descriptor-id}` and `properties/${property-id}`, while the pickles use the plain descriptor identifiers.
 
 ### Python-enhanced archives
 
 An archive written by this package is a classical archive plus the Python-specific files marked below:
 
 ```
-{archive}
+${archive}
 ├── archive.xml
 ├── requirements.txt                        <- Python-specific
 ├── compounds
 │   ├── compounds.xml
-│   └── {id}
-│       └── daylight-smiles
+│   ├── ${compound-id}
+│   │   └── daylight-smiles
+│   └── ...
 ├── properties
 │   ├── properties.xml
-│   └── {id}
-│       └── values
+│   ├── ${property-id}
+│   │   └── values
+│   └── ...
 ├── descriptors
 │   ├── descriptors.xml
-│   └── {id}
-│       ├── values
-│       └── pkl                             <- Python-specific
+│   ├── ${descriptor-id}
+│   │   ├── values
+│   │   └── pkl                             <- Python-specific
+│   └── ...
 ├── models
 │   ├── models.xml
-│   └── {id}
-│       ├── pmml
-│       └── pkl                             <- Python-specific
+│   ├── ${model-id}
+│   │   ├── pmml
+│   │   └── pkl                             <- Python-specific
+│   └── ...
 └── predictions
     ├── predictions.xml
-    └── {id}
-        └── values
+    ├── ${prediction-id}
+    │   └── values
+    └── ...
 ```
 
 Everything else is where a classical archive puts it, so a reader that knows nothing about the additions still finds the PMML and the values where it expects them.
@@ -583,7 +593,7 @@ A multi-model archive must be narrowed with `select` first.
 The model `pkl` is an ordinary Scikit-Learn pipeline, and can be used in either direction:
 
 ```python
-model = pickle.loads(qdb.cargos["models"]["1"]["pkl"])
+model = pickle.loads(qdb.cargos["models"][model_id]["pkl"])
 
 model.predict(structures)
 model[1:].predict(descriptor_values)
@@ -592,7 +602,7 @@ model[1:].predict(descriptor_values)
 Each descriptor `pkl` is a pipeline of its own, taking structures and returning that one descriptor:
 
 ```python
-descriptor = pickle.loads(qdb.cargos["descriptors"]["MolLogP"]["pkl"])
+descriptor = pickle.loads(qdb.cargos["descriptors"][descriptor_id]["pkl"])
 
 descriptor.transform(structures)
 ```
