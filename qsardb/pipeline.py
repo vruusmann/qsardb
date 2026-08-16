@@ -305,9 +305,11 @@ def _capture_modules(estimator):
 	path = os.path.join(directory, "estimator.pkl")
 	with open(path, "wb") as file:
 		pickle.dump(estimator, file)
-	modules = subprocess.check_output([sys.executable, "-c", _CAPTURE, path], text = True).split()
+	completed = subprocess.run([sys.executable, "-c", _CAPTURE, path], capture_output = True, text = True)
 	shutil.rmtree(directory)
-	return set(modules)
+	if completed.returncode:
+		raise ValueError("The fitted pipeline cannot be unpickled in a fresh interpreter, so the archive would not be executable. Every custom class it holds must be importable from a module rather than defined in a script. The loader reported: %s" % completed.stderr.strip().splitlines()[-1])
+	return set(completed.stdout.split())
 
 def format_requirements(estimator):
 	distributions = _prune(_distributions(_capture_modules(estimator))) - {"qsardb", "pip", "setuptools"}
